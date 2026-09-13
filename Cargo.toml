@@ -15,4 +15,5 @@ rust-version = "1.85"
 [workspace.dependencies]
 crc32fast = "1.4"
 fs2 = "0.4"
+getrandom = "0.4"
 thiserror = "2"
