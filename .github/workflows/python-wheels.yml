@@ -3,165 +3,178 @@ name: Python Release
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: "Version to publish (for example: 0.1.0)"
+      bump:
+        description: "Version increment after the first release"
         required: true
-        type: string
-        default: "0.1.0"
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
 
-permissions:
-  contents: read
+concurrency:
+  group: python-release
+  cancel-in-progress: false
 
 jobs:
-  validate:
-    name: validate release
+  prepare:
+    name: prepare release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      sha: ${{ steps.commit.outputs.sha }}
+
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Validate branch and version
+      - name: Calculate release version
+        id: version
         env:
-          RELEASE_VERSION: ${{ inputs.version }}
-          RELEASE_REF: ${{ github.ref }}
+          BUMP: ${{ inputs.bump }}
         run: |
           python - <<'PY'
-          import os
-          import pathlib
-          import re
-          import tomllib
+          import os, re, subprocess, tomllib
+          from pathlib import Path
 
-          version = os.environ["RELEASE_VERSION"].strip()
-          ref = os.environ["RELEASE_REF"]
+          with Path("pyproject.toml").open("rb") as fh:
+              current = tomllib.load(fh)["project"]["version"]
 
-          if ref != "refs/heads/main":
-              raise SystemExit(f"Releases must run from main, got {ref}")
+          if not re.fullmatch(r"\d+\.\d+\.\d+", current):
+              raise SystemExit(f"Unsupported project version: {current}")
 
-          if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:[a-zA-Z0-9.-]+)?", version):
-              raise SystemExit(f"Invalid release version: {version}")
+          tags = subprocess.run(
+              ["git", "tag", "--list", "python-v*"],
+              check=True, text=True, capture_output=True,
+          ).stdout.splitlines()
 
-          pyproject = tomllib.loads(pathlib.Path("pyproject.toml").read_text())
-          python_version = pyproject["project"]["version"]
+          if not tags:
+              version = current
+          else:
+              major, minor, patch = map(int, current.split("."))
+              bump = os.environ["BUMP"]
+              if bump == "major":
+                  major, minor, patch = major + 1, 0, 0
+              elif bump == "minor":
+                  minor, patch = minor + 1, 0
+              else:
+                  patch += 1
+              version = f"{major}.{minor}.{patch}"
 
-          cargo = tomllib.loads(
-              pathlib.Path("crates/voodoo-store-python/Cargo.toml").read_text()
-          )
-          cargo_version = cargo["package"]["version"]
+          tag = f"python-v{version}"
+          if tag in tags:
+              raise SystemExit(f"Release tag already exists: {tag}")
 
-          init_text = pathlib.Path("python/voodoo_store/__init__.py").read_text()
-          match = re.search(r'^__version__\s*=\s*["\']([^"\']+)["\']', init_text, re.MULTILINE)
-          if not match:
-              raise SystemExit("Could not find __version__ in python/voodoo_store/__init__.py")
-          module_version = match.group(1)
-
-          versions = {
-              "workflow input": version,
-              "pyproject.toml": python_version,
-              "Python binding Cargo.toml": cargo_version,
-              "voodoo_store.__version__": module_version,
-          }
-
-          for source, value in versions.items():
-              print(f"{source}: {value}")
-              if value != version:
-                  raise SystemExit(
-                      f"Version mismatch: {source} has {value}, expected {version}"
-                  )
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(f"version={version}\n")
           PY
 
-      - name: Ensure release does not already exist
+      - name: Synchronize versions
         env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_VERSION: ${{ inputs.version }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          if gh release view "python-v${RELEASE_VERSION}" >/dev/null 2>&1; then
-            echo "Release python-v${RELEASE_VERSION} already exists."
-            exit 1
+          python - <<'PY'
+          import os, re
+          from pathlib import Path
+
+          version = os.environ["VERSION"]
+          targets = [
+              (Path("pyproject.toml"), r'(?m)^version = "[^"]+"$', f'version = "{version}"'),
+              (Path("crates/voodoo-store-python/Cargo.toml"), r'(?m)^version = "[^"]+"$', f'version = "{version}"'),
+              (Path("python/voodoo_store/__init__.py"), r'(?m)^__version__ = "[^"]+"$', f'__version__ = "{version}"'),
+          ]
+          for path, pattern, replacement in targets:
+              text = path.read_text(encoding="utf-8")
+              updated, count = re.subn(pattern, replacement, text, count=1)
+              if count != 1:
+                  raise SystemExit(f"Could not update version in {path}")
+              path.write_text(updated, encoding="utf-8")
+          PY
+
+      - name: Commit release version when needed
+        id: commit
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git diff --quiet; then
+            git add pyproject.toml crates/voodoo-store-python/Cargo.toml python/voodoo_store/__init__.py
+            git commit -m "chore: release Python ${VERSION}"
+            git push origin HEAD:main
           fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   quality:
-    name: quality and core tests
-    needs: validate
+    name: quality and tests
+    needs: prepare
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Format
-        run: cargo fmt --all -- --check
-
-      - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
-
-      - name: Test Rust workspace
-        run: cargo test --workspace
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Rust quality
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo test --workspace
+      - name: Python tests
+        run: |
+          python -m pip install "maturin>=1.9,<2" pytest
+          python -m maturin develop --release
+          python -m pytest -q python/tests
+      - name: Verify package version
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: python -c "import os, voodoo_store; assert voodoo_store.__version__ == os.environ['VERSION']"
 
   wheels:
     name: wheel (${{ matrix.name }})
-    needs: [validate, quality]
+    needs: [prepare, quality]
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: linux-x86_64
-            os: ubuntu-latest
-            target: x86_64
-            manylinux: auto
-          - name: linux-aarch64
-            os: ubuntu-24.04-arm
-            target: aarch64
-            manylinux: auto
-          - name: macos-arm64
-            os: macos-15
-            target: aarch64
-            manylinux: ""
-          - name: macos-x86_64
-            os: macos-15-intel
-            target: x86_64
-            manylinux: ""
-          - name: windows-x86_64
-            os: windows-latest
-            target: x64
-            manylinux: ""
-
+          - { name: linux-x86_64, os: ubuntu-latest, target: x86_64, manylinux: auto }
+          - { name: linux-aarch64, os: ubuntu-24.04-arm, target: aarch64, manylinux: auto }
+          - { name: macos-arm64, os: macos-15, target: aarch64, manylinux: "" }
+          - { name: macos-x86_64, os: macos-15-intel, target: x86_64, manylinux: "" }
+          - { name: windows-x86_64, os: windows-latest, target: x64, manylinux: "" }
     runs-on: ${{ matrix.os }}
-
     steps:
       - uses: actions/checkout@v4
-
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
       - name: Build wheel
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
           args: --release --out dist
           manylinux: ${{ matrix.manylinux }}
-
-      - name: Install built wheel
-        run: >-
-          python -c "import glob, subprocess, sys;
-          wheels = glob.glob('dist/*.whl');
-          assert len(wheels) == 1, wheels;
-          subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--force-reinstall', wheels[0]])"
-
-      - name: Test installed wheel
+      - name: Install and test wheel
+        shell: bash
         run: |
-          python -m pip install pytest
+          python -m pip install --force-reinstall dist/*.whl pytest
           python -m pytest -q python/tests
-
-      - name: Upload wheel
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: voodoo-store-${{ matrix.name }}
           path: dist/*.whl
@@ -169,22 +182,19 @@ jobs:
 
   sdist:
     name: source distribution
-    needs: [validate, quality]
+    needs: [prepare, quality]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - name: Build source distribution
-        run: |
+      - run: |
           python -m pip install "maturin>=1.9,<2"
           maturin sdist --out dist
-
-      - name: Upload source distribution
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: voodoo-store-sdist
           path: dist/*.tar.gz
@@ -192,47 +202,44 @@ jobs:
 
   publish:
     name: publish to PyPI
-    needs: [validate, quality, wheels, sdist]
+    needs: [prepare, wheels, sdist]
     runs-on: ubuntu-latest
     environment:
       name: pypi
       url: https://pypi.org/project/voodoo-store/
     permissions:
       id-token: write
-      contents: read
-
     steps:
-      - name: Download distributions
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           pattern: voodoo-store-*
           path: dist
           merge-multiple: true
-
-      - name: Show distributions
-        run: ls -lh dist
-
-      - name: Publish package distributions to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: pypa/gh-action-pypi-publish@release/v1
 
   release:
     name: tag and GitHub release
-    needs: publish
+    needs: [prepare, publish]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ needs.prepare.outputs.sha }}
           fetch-depth: 0
-
-      - name: Create GitHub release and tag
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: voodoo-store-*
+          path: dist
+          merge-multiple: true
+      - name: Create tag and release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_VERSION: ${{ inputs.version }}
-          TARGET_SHA: ${{ github.sha }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          RELEASE_SHA: ${{ needs.prepare.outputs.sha }}
         run: |
-          gh release create "python-v${RELEASE_VERSION}" \
-            --target "${TARGET_SHA}" \
-            --title "Voodoo Store Python v${RELEASE_VERSION}" \
-            --generate-notes
+          TAG="python-v${VERSION}"
+          git tag "$TAG" "$RELEASE_SHA"
+          git push origin "$TAG"
+          gh release create "$TAG" dist/* --target "$RELEASE_SHA" --title "Voodoo Store Python v${VERSION}" --generate-notes
