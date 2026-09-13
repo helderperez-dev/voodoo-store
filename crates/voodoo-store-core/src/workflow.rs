@@ -128,13 +128,8 @@ impl Store {
         Ok(id)
     }
 
-    pub fn get_workflow(
-        &self,
-        id: &WorkflowId,
-    ) -> Result<Option<WorkflowInstance>, WorkflowError> {
-        self.get(instance_key(id))
-            .map(decode_instance)
-            .transpose()
+    pub fn get_workflow(&self, id: &WorkflowId) -> Result<Option<WorkflowInstance>, WorkflowError> {
+        self.get(instance_key(id)).map(decode_instance).transpose()
     }
 
     pub fn set_workflow_step(
@@ -148,9 +143,7 @@ impl Store {
         if step.is_empty() {
             return Err(WorkflowError::EmptyStep);
         }
-        let mut instance = self
-            .get_workflow(id)?
-            .ok_or(WorkflowError::NotFound)?;
+        let mut instance = self.get_workflow(id)?.ok_or(WorkflowError::NotFound)?;
         ensure_active(&instance)?;
         instance.status = WorkflowStatus::Running;
         instance.current_step = step.to_vec();
@@ -175,9 +168,7 @@ impl Store {
         if signal.is_empty() {
             return Err(WorkflowError::EmptySignal);
         }
-        let mut instance = self
-            .get_workflow(id)?
-            .ok_or(WorkflowError::NotFound)?;
+        let mut instance = self.get_workflow(id)?.ok_or(WorkflowError::NotFound)?;
         ensure_active(&instance)?;
         instance.status = WorkflowStatus::Waiting;
         instance.wait = Some(WorkflowWait::Signal {
@@ -200,9 +191,7 @@ impl Store {
         now_ms: i64,
     ) -> Result<bool, WorkflowError> {
         let signal = signal.as_ref();
-        let mut instance = self
-            .get_workflow(id)?
-            .ok_or(WorkflowError::NotFound)?;
+        let mut instance = self.get_workflow(id)?.ok_or(WorkflowError::NotFound)?;
         let Some(WorkflowWait::Signal { name }) = instance.wait.as_ref() else {
             return Ok(false);
         };
@@ -228,9 +217,7 @@ impl Store {
         resume_at_ms: i64,
         now_ms: i64,
     ) -> Result<(), WorkflowError> {
-        let mut instance = self
-            .get_workflow(id)?
-            .ok_or(WorkflowError::NotFound)?;
+        let mut instance = self.get_workflow(id)?.ok_or(WorkflowError::NotFound)?;
         ensure_active(&instance)?;
         instance.status = WorkflowStatus::Waiting;
         instance.wait = Some(WorkflowWait::Timer { resume_at_ms });
@@ -369,9 +356,7 @@ impl Store {
         detail: &[u8],
         now_ms: i64,
     ) -> Result<(), WorkflowError> {
-        let mut instance = self
-            .get_workflow(id)?
-            .ok_or(WorkflowError::NotFound)?;
+        let mut instance = self.get_workflow(id)?.ok_or(WorkflowError::NotFound)?;
         if is_terminal(instance.status) {
             return Err(WorkflowError::AlreadyTerminal);
         }
@@ -398,7 +383,10 @@ impl Store {
         };
         let mut tx = self.begin()?;
         tx.put_internal(instance_key(&instance.id), encode_instance(instance)?)?;
-        tx.put_internal(history_key(&instance.id, sequence), encode_history(&history)?)?;
+        tx.put_internal(
+            history_key(&instance.id, sequence),
+            encode_history(&history)?,
+        )?;
         tx.commit()?;
         Ok(())
     }
@@ -697,7 +685,11 @@ mod tests {
                 store.get_workflow(&id).unwrap().unwrap().status,
                 WorkflowStatus::Waiting
             );
-            assert!(store.signal_workflow(&id, b"approved", b"yes", 2).unwrap());
+            assert!(
+                store
+                    .signal_workflow(&id, b"approved", b"yes", 2)
+                    .unwrap()
+            );
             let instance = store.get_workflow(&id).unwrap().unwrap();
             assert_eq!(instance.status, WorkflowStatus::Running);
             assert_eq!(instance.state, b"yes");
