@@ -102,7 +102,9 @@ mod tests {
         {
             let mut store = Store::open(&source).unwrap();
             for index in 0..25 {
-                store.put(b"key", format!("value-{index}").as_bytes()).unwrap();
+                store
+                    .put(b"key", format!("value-{index}").as_bytes())
+                    .unwrap();
             }
             store.put(b"keep", b"yes").unwrap();
             store.put(b"remove", b"later").unwrap();
