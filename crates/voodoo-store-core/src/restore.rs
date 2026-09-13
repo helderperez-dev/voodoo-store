@@ -46,11 +46,7 @@ impl Store {
             .into());
         }
 
-        let result = restore_verified(source, destination, &source_report);
-        if result.is_err() {
-            let _ = fs::remove_file(destination);
-        }
-        result
+        restore_verified(source, destination, &source_report)
     }
 }
 
@@ -64,17 +60,36 @@ fn restore_verified(
         .write(true)
         .create_new(true)
         .open(destination)?;
-    let bytes = io::copy(&mut source_file, &mut destination_file)?;
-    destination_file.sync_all()?;
+
+    let bytes = match io::copy(&mut source_file, &mut destination_file) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            drop(destination_file);
+            let _ = fs::remove_file(destination);
+            return Err(error.into());
+        }
+    };
+    if let Err(error) = destination_file.sync_all() {
+        drop(destination_file);
+        let _ = fs::remove_file(destination);
+        return Err(error.into());
+    }
     drop(destination_file);
 
-    let restored = Store::verify(destination)?;
+    let restored = match Store::verify(destination) {
+        Ok(report) => report,
+        Err(error) => {
+            let _ = fs::remove_file(destination);
+            return Err(error);
+        }
+    };
     if restored.has_torn_tail()
         || restored.file_bytes != source_report.file_bytes
         || restored.valid_bytes != source_report.valid_bytes
         || restored.keys != source_report.keys
         || restored.header != source_report.header
     {
+        let _ = fs::remove_file(destination);
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "restored store does not match verified source",
