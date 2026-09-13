@@ -191,7 +191,8 @@ fn encode_queue_message(
 fn tuple_key(prefix: &[u8], components: &[&[u8]]) -> Result<Vec<u8>, DomainTransactionError> {
     let mut key = Vec::from(prefix);
     for component in components {
-        let len = u32::try_from(component.len()).map_err(|_| DomainTransactionError::NameTooLong)?;
+        let len =
+            u32::try_from(component.len()).map_err(|_| DomainTransactionError::NameTooLong)?;
         key.extend_from_slice(&len.to_be_bytes());
         key.extend_from_slice(component);
     }
@@ -218,8 +219,8 @@ fn reference_key(namespace: &[u8], name: &[u8]) -> Result<Vec<u8>, DomainTransac
     if namespace.is_empty() || name.is_empty() {
         return Err(DomainTransactionError::EmptyReferenceName);
     }
-    let namespace_len = u32::try_from(namespace.len())
-        .map_err(|_| DomainTransactionError::ReferenceNameTooLong)?;
+    let namespace_len =
+        u32::try_from(namespace.len()).map_err(|_| DomainTransactionError::ReferenceNameTooLong)?;
     let name_len =
         u32::try_from(name.len()).map_err(|_| DomainTransactionError::ReferenceNameTooLong)?;
     let mut key = Vec::with_capacity(OBJECT_REF_PREFIX.len() + 8 + namespace.len() + name.len());
@@ -274,11 +275,17 @@ mod tests {
             let mut store = Store::open(&path).unwrap();
             let mut tx = store.begin().unwrap();
             tx.put(b"order:42", b"paid").unwrap();
-            job_id = tx
-                .enqueue_job(JobSpec::new(b"receipt", b"42"), 10)
-                .unwrap();
-            assert_eq!(tx.push_queue(b"emails", b"receipt:42", PushOptions::default()).unwrap(), 1);
-            assert_eq!(tx.push_queue(b"emails", b"audit:42", PushOptions::default()).unwrap(), 2);
+            job_id = tx.enqueue_job(JobSpec::new(b"receipt", b"42"), 10).unwrap();
+            assert_eq!(
+                tx.push_queue(b"emails", b"receipt:42", PushOptions::default())
+                    .unwrap(),
+                1
+            );
+            assert_eq!(
+                tx.push_queue(b"emails", b"audit:42", PushOptions::default())
+                    .unwrap(),
+                2
+            );
             assert_eq!(tx.append_stream(b"orders", b"paid:42").unwrap(), 0);
             assert_eq!(tx.publish_topic(b"notifications", b"order:42").unwrap(), 0);
             object_id = tx.put_object(b"invoice bytes").unwrap();
@@ -288,10 +295,16 @@ mod tests {
 
             assert_eq!(store.get(b"order:42"), Some(b"paid".as_slice()));
             assert!(store.get_job(&job_id).unwrap().is_some());
-            assert_eq!(store.resolve_object_ref(b"invoices", b"42").unwrap(), Some(object_id));
-            assert_eq!(store.get_object(&object_id).unwrap(), Some(b"invoice bytes".as_slice()));
+            assert_eq!(
+                store.resolve_object_ref(b"invoices", b"42").unwrap(),
+                Some(object_id)
+            );
+            assert_eq!(
+                store.get_object(&object_id).unwrap(),
+                Some(b"invoice bytes".as_slice())
+            );
             {
-                let mut queue = store.queue(b"emails").unwrap();
+                let queue = store.queue(b"emails").unwrap();
                 assert_eq!(queue.stats().unwrap().total, 2);
             }
             {
@@ -314,7 +327,8 @@ mod tests {
             let mut store = Store::open(&path).unwrap();
             let mut tx = store.begin().unwrap();
             tx.put(b"state", b"new").unwrap();
-            tx.push_queue(b"q", b"message", PushOptions::default()).unwrap();
+            tx.push_queue(b"q", b"message", PushOptions::default())
+                .unwrap();
             tx.append_stream(b"s", b"entry").unwrap();
             object_id = tx.put_object(b"object").unwrap();
             tx.link_object(b"refs", b"one", &object_id).unwrap();
@@ -324,7 +338,14 @@ mod tests {
             assert!(store.get_object(&object_id).unwrap().is_none());
             assert!(store.resolve_object_ref(b"refs", b"one").unwrap().is_none());
             assert_eq!(store.queue(b"q").unwrap().stats().unwrap().total, 0);
-            assert!(store.stream(b"s").unwrap().read_from(0, 10).unwrap().is_empty());
+            assert!(
+                store
+                    .stream(b"s")
+                    .unwrap()
+                    .read_from(0, 10)
+                    .unwrap()
+                    .is_empty()
+            );
         }
         let _ = fs::remove_file(path);
     }
