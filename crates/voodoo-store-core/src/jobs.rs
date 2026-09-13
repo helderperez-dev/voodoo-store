@@ -174,7 +174,8 @@ impl Store {
         now_ms: i64,
         lease_duration_ms: u64,
     ) -> Result<Option<DurableJob>, JobError> {
-        let lease_duration = i64::try_from(lease_duration_ms).map_err(|_| JobError::TimeOverflow)?;
+        let lease_duration =
+            i64::try_from(lease_duration_ms).map_err(|_| JobError::TimeOverflow)?;
         let lease_until_ms = now_ms
             .checked_add(lease_duration)
             .ok_or(JobError::TimeOverflow)?;
@@ -838,14 +839,22 @@ mod tests {
             assert_eq!(store.tick_schedules(49, 10).unwrap().fired, 0);
             assert_eq!(store.tick_schedules(250, 10).unwrap().fired, 1);
             assert_eq!(
-                store.get_schedule(&schedule_id).unwrap().unwrap().next_run_ms,
+                store
+                    .get_schedule(&schedule_id)
+                    .unwrap()
+                    .unwrap()
+                    .next_run_ms,
                 350
             );
         }
         {
             let store = Store::open(&path).unwrap();
             assert_eq!(
-                store.get_schedule(&schedule_id).unwrap().unwrap().next_run_ms,
+                store
+                    .get_schedule(&schedule_id)
+                    .unwrap()
+                    .unwrap()
+                    .next_run_ms,
                 350
             );
         }
