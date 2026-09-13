@@ -10,6 +10,7 @@ pub mod collection;
 pub mod compaction;
 pub mod engine;
 pub mod header;
+pub mod jobs;
 pub mod log;
 pub mod messaging;
 pub mod model;
@@ -25,6 +26,10 @@ pub use collection::{
 pub use compaction::CompactionReport;
 pub use engine::{Durability, EngineError, Store, StoreOptions, Transaction, VerificationReport};
 pub use header::{FORMAT_MAJOR, FORMAT_MINOR, HeaderError, STORE_HEADER_LEN, StoreHeader};
+pub use jobs::{
+    DurableJob, DurableJobState, DurableSchedule, JobError, JobHistoryEntry, JobHistoryKind, JobId,
+    JobSpec, ScheduleId, ScheduleMode, SchedulerTickReport,
+};
 pub use log::{LogRecord, RecordKind, StoreError};
 pub use messaging::{MessagingError, Stream, StreamEntry, SubscriptionState, Topic};
 pub use model::{
