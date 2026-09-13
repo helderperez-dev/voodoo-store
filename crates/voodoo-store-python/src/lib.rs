@@ -54,9 +54,7 @@ impl PyStore {
 
     fn get(&self, py: Python<'_>, key: &[u8]) -> PyResult<Option<Py<PyBytes>>> {
         with_store(&self.slot, |store| {
-            Ok(store
-                .get(key)
-                .map(|value| PyBytes::new(py, value).unbind()))
+            Ok(store.get(key).map(|value| PyBytes::new(py, value).unbind()))
         })
     }
 
@@ -314,11 +312,23 @@ fn map_engine_error(error: EngineError) -> PyErr {
 fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyStore>()?;
     module.add_class::<PyTransaction>()?;
-    module.add("VoodooStoreError", module.py().get_type::<VoodooStoreError>())?;
-    module.add("StoreClosedError", module.py().get_type::<StoreClosedError>())?;
+    module.add(
+        "VoodooStoreError",
+        module.py().get_type::<VoodooStoreError>(),
+    )?;
+    module.add(
+        "StoreClosedError",
+        module.py().get_type::<StoreClosedError>(),
+    )?;
     module.add("StoreBusyError", module.py().get_type::<StoreBusyError>())?;
-    module.add("AlreadyOpenError", module.py().get_type::<AlreadyOpenError>())?;
-    module.add("ReservedKeyError", module.py().get_type::<ReservedKeyError>())?;
+    module.add(
+        "AlreadyOpenError",
+        module.py().get_type::<AlreadyOpenError>(),
+    )?;
+    module.add(
+        "ReservedKeyError",
+        module.py().get_type::<ReservedKeyError>(),
+    )?;
     module.add(
         "TransactionFinishedError",
         module.py().get_type::<TransactionFinishedError>(),
