@@ -69,9 +69,7 @@ impl Store {
         name: impl AsRef<[u8]>,
     ) -> Result<Option<CollectionDefinition>, CollectionError> {
         let key = meta_key(name.as_ref())?;
-        self.get(key)
-            .map(decode_collection_definition)
-            .transpose()
+        self.get(key).map(decode_collection_definition).transpose()
     }
 
     pub fn migrate_collection_schema(
@@ -83,9 +81,7 @@ impl Store {
     ) -> Result<bool, CollectionError> {
         let name = name.as_ref();
         let key = meta_key(name)?;
-        let current = self
-            .get(&key)
-            .ok_or(CollectionError::CollectionNotFound)?;
+        let current = self.get(&key).ok_or(CollectionError::CollectionNotFound)?;
         let definition = decode_collection_definition(current)?;
         if definition.schema_version != expected_version {
             return Ok(false);
@@ -132,10 +128,7 @@ impl Store {
         }
 
         let record_key = record_key(collection, primary_key)?;
-        let existing = self
-            .get(&record_key)
-            .map(decode_record_value)
-            .transpose()?;
+        let existing = self.get(&record_key).map(decode_record_value).transpose()?;
 
         for index in indexes {
             let definition = index_definition(self, collection, &index.index)?;
@@ -348,8 +341,11 @@ fn decode_record_primary_key(prefix: &[u8], key: &[u8]) -> Result<Vec<u8>, Colle
     Ok(rest[4..].to_vec())
 }
 
-fn encode_collection_definition(definition: &CollectionDefinition) -> Result<Vec<u8>, CollectionError> {
-    let codec_len = u32::try_from(definition.codec.len()).map_err(|_| CollectionError::ComponentTooLarge)?;
+fn encode_collection_definition(
+    definition: &CollectionDefinition,
+) -> Result<Vec<u8>, CollectionError> {
+    let codec_len =
+        u32::try_from(definition.codec.len()).map_err(|_| CollectionError::ComponentTooLarge)?;
     let mut encoded = Vec::with_capacity(9 + definition.codec.len());
     encoded.push(FORMAT_VERSION);
     encoded.extend_from_slice(&definition.schema_version.to_le_bytes());
@@ -382,8 +378,10 @@ fn encode_record_value(value: &[u8], indexes: &[IndexValue]) -> Result<Vec<u8>, 
     encoded.extend_from_slice(&index_count.to_le_bytes());
     encoded.extend_from_slice(value);
     for index in indexes {
-        let name_len = u16::try_from(index.index.len()).map_err(|_| CollectionError::ComponentTooLarge)?;
-        let value_len = u32::try_from(index.value.len()).map_err(|_| CollectionError::ComponentTooLarge)?;
+        let name_len =
+            u16::try_from(index.index.len()).map_err(|_| CollectionError::ComponentTooLarge)?;
+        let value_len =
+            u32::try_from(index.value.len()).map_err(|_| CollectionError::ComponentTooLarge)?;
         encoded.extend_from_slice(&name_len.to_le_bytes());
         encoded.extend_from_slice(&index.index);
         encoded.extend_from_slice(&value_len.to_le_bytes());
@@ -396,9 +394,12 @@ fn decode_record_value(encoded: &[u8]) -> Result<StoredRecord, CollectionError> 
     if encoded.len() < 7 || encoded[0] != FORMAT_VERSION {
         return Err(CollectionError::CorruptRecord);
     }
-    let value_len = u32::from_le_bytes(encoded[1..5].try_into().expect("record value length")) as usize;
+    let value_len =
+        u32::from_le_bytes(encoded[1..5].try_into().expect("record value length")) as usize;
     let index_count = u16::from_le_bytes(encoded[5..7].try_into().expect("index count")) as usize;
-    let value_end = 7usize.checked_add(value_len).ok_or(CollectionError::CorruptRecord)?;
+    let value_end = 7usize
+        .checked_add(value_len)
+        .ok_or(CollectionError::CorruptRecord)?;
     if value_end > encoded.len() {
         return Err(CollectionError::CorruptRecord);
     }
@@ -409,17 +410,29 @@ fn decode_record_value(encoded: &[u8]) -> Result<StoredRecord, CollectionError> 
         if cursor + 2 > encoded.len() {
             return Err(CollectionError::CorruptRecord);
         }
-        let name_len = u16::from_le_bytes(encoded[cursor..cursor + 2].try_into().expect("index name length")) as usize;
+        let name_len = u16::from_le_bytes(
+            encoded[cursor..cursor + 2]
+                .try_into()
+                .expect("index name length"),
+        ) as usize;
         cursor += 2;
-        let name_end = cursor.checked_add(name_len).ok_or(CollectionError::CorruptRecord)?;
+        let name_end = cursor
+            .checked_add(name_len)
+            .ok_or(CollectionError::CorruptRecord)?;
         if name_end + 4 > encoded.len() {
             return Err(CollectionError::CorruptRecord);
         }
         let name = encoded[cursor..name_end].to_vec();
         cursor = name_end;
-        let index_value_len = u32::from_le_bytes(encoded[cursor..cursor + 4].try_into().expect("index value length")) as usize;
+        let index_value_len = u32::from_le_bytes(
+            encoded[cursor..cursor + 4]
+                .try_into()
+                .expect("index value length"),
+        ) as usize;
         cursor += 4;
-        let index_value_end = cursor.checked_add(index_value_len).ok_or(CollectionError::CorruptRecord)?;
+        let index_value_end = cursor
+            .checked_add(index_value_len)
+            .ok_or(CollectionError::CorruptRecord)?;
         if index_value_end > encoded.len() {
             return Err(CollectionError::CorruptRecord);
         }
@@ -490,16 +503,22 @@ mod tests {
         let path = temp_store_path("durable");
         {
             let mut store = Store::open(&path).unwrap();
-            assert!(store.create_collection(b"users", &CollectionDefinition::default()).unwrap());
-            assert!(store
-                .define_index(
-                    b"users",
-                    &IndexDefinition {
-                        name: b"email".to_vec(),
-                        unique: true,
-                    },
-                )
-                .unwrap());
+            assert!(
+                store
+                    .create_collection(b"users", &CollectionDefinition::default())
+                    .unwrap()
+            );
+            assert!(
+                store
+                    .define_index(
+                        b"users",
+                        &IndexDefinition {
+                            name: b"email".to_vec(),
+                            unique: true,
+                        },
+                    )
+                    .unwrap()
+            );
             store
                 .upsert_record(
                     b"users",
@@ -529,7 +548,9 @@ mod tests {
     fn unique_index_rejects_conflicting_owner_and_update_rewrites_index() {
         let path = temp_store_path("unique");
         let mut store = Store::open(&path).unwrap();
-        store.create_collection(b"users", &CollectionDefinition::default()).unwrap();
+        store
+            .create_collection(b"users", &CollectionDefinition::default())
+            .unwrap();
         store
             .define_index(
                 b"users",
@@ -553,10 +574,12 @@ mod tests {
             value: b"new@example.com".to_vec(),
         }];
         store.upsert_record(b"users", b"u1", b"A2", &next).unwrap();
-        assert!(store
-            .query_index_exact(b"users", b"email", b"old@example.com")
-            .unwrap()
-            .is_empty());
+        assert!(
+            store
+                .query_index_exact(b"users", b"email", b"old@example.com")
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(
             store
                 .query_index_exact(b"users", b"email", b"new@example.com")
@@ -572,13 +595,19 @@ mod tests {
     fn schema_migration_is_compare_and_swap_like() {
         let path = temp_store_path("schema");
         let mut store = Store::open(&path).unwrap();
-        store.create_collection(b"events", &CollectionDefinition::default()).unwrap();
-        assert!(!store
-            .migrate_collection_schema(b"events", 9, 10, b"cbor")
-            .unwrap());
-        assert!(store
-            .migrate_collection_schema(b"events", 1, 2, b"cbor")
-            .unwrap());
+        store
+            .create_collection(b"events", &CollectionDefinition::default())
+            .unwrap();
+        assert!(
+            !store
+                .migrate_collection_schema(b"events", 9, 10, b"cbor")
+                .unwrap()
+        );
+        assert!(
+            store
+                .migrate_collection_schema(b"events", 1, 2, b"cbor")
+                .unwrap()
+        );
         let definition = store.collection_definition(b"events").unwrap().unwrap();
         assert_eq!(definition.schema_version, 2);
         assert_eq!(definition.codec, b"cbor");
