@@ -250,11 +250,12 @@ impl PyTransaction {
 
 impl Drop for PyTransaction {
     fn drop(&mut self) {
-        if let Some(store) = self.store.take()
-            && let Ok(mut slot) = self.slot.lock()
-            && matches!(*slot, StoreSlot::InTransaction)
-        {
-            *slot = StoreSlot::Open(store);
+        if let Some(store) = self.store.take() {
+            if let Ok(mut slot) = self.slot.lock() {
+                if matches!(*slot, StoreSlot::InTransaction) {
+                    *slot = StoreSlot::Open(store);
+                }
+            }
         }
     }
 }
