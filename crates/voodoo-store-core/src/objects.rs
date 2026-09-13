@@ -44,12 +44,10 @@ impl Store {
     }
 
     pub fn object_info(&self, id: &ObjectId) -> Result<Option<ObjectInfo>, ObjectError> {
-        Ok(self
-            .get_object(id)?
-            .map(|content| ObjectInfo {
-                id: *id,
-                size: content.len() as u64,
-            }))
+        Ok(self.get_object(id)?.map(|content| ObjectInfo {
+            id: *id,
+            size: content.len() as u64,
+        }))
     }
 
     pub fn verify_object(&self, id: &ObjectId) -> Result<bool, ObjectError> {
@@ -250,8 +248,14 @@ mod tests {
         }
         {
             let store = Store::open(&path).unwrap();
-            assert_eq!(store.get_object(&id).unwrap(), Some(b"hello world".as_slice()));
-            assert_eq!(store.resolve_object_ref(b"avatars", b"u1").unwrap(), Some(id));
+            assert_eq!(
+                store.get_object(&id).unwrap(),
+                Some(b"hello world".as_slice())
+            );
+            assert_eq!(
+                store.resolve_object_ref(b"avatars", b"u1").unwrap(),
+                Some(id)
+            );
         }
         let _ = fs::remove_file(path);
     }
