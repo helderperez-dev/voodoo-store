@@ -11,25 +11,13 @@ use crate::{EngineError, MessagingError, Store, StreamEntry};
 const GROUP_PREFIX: &[u8] = b"\xffvds:cg:state:";
 const VERSION: u8 = 1;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ConsumerGroupState {
     pub next_offset: u64,
     pub leased_offset: Option<u64>,
     pub lease_until_ms: i64,
     pub lease_generation: u64,
     pub owner: Vec<u8>,
-}
-
-impl Default for ConsumerGroupState {
-    fn default() -> Self {
-        Self {
-            next_offset: 0,
-            leased_offset: None,
-            lease_until_ms: 0,
-            lease_generation: 0,
-            owner: Vec::new(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
