@@ -18,6 +18,7 @@ pub mod objects;
 pub mod queue;
 pub mod restore;
 pub mod ttl;
+pub mod workflow;
 
 pub use atomic::{AtomicError, CasOutcome};
 pub use collection::{
@@ -39,3 +40,7 @@ pub use objects::{ObjectError, ObjectGcReport, ObjectId, ObjectInfo};
 pub use queue::{PushOptions, Queue, QueueError, QueueMessage, QueueState, QueueStats};
 pub use restore::RestoreReport;
 pub use ttl::{TtlError, TtlInfo, TtlSweepReport};
+pub use workflow::{
+    WorkflowError, WorkflowHistoryEntry, WorkflowHistoryKind, WorkflowId, WorkflowInstance,
+    WorkflowResumeReport, WorkflowStatus, WorkflowWait,
+};
