@@ -3,7 +3,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use voodoo_store_core::{EngineError, LogRecord, RecordKind, Store, StoreError, STORE_HEADER_LEN};
+use voodoo_store_core::{EngineError, LogRecord, RecordKind, STORE_HEADER_LEN, Store, StoreError};
 
 fn temp_store_path(name: &str) -> PathBuf {
     let nonce = SystemTime::now()
@@ -51,7 +51,10 @@ fn every_incomplete_final_record_prefix_is_repaired_without_losing_committed_sta
         assert_eq!(store.get(b"ghost"), None);
         drop(store);
 
-        assert_eq!(fs::metadata(&path).unwrap().len(), baseline_bytes.len() as u64);
+        assert_eq!(
+            fs::metadata(&path).unwrap().len(),
+            baseline_bytes.len() as u64
+        );
         let _ = fs::remove_file(path);
     }
 
