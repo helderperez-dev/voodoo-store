@@ -164,7 +164,10 @@ impl<'a> Cursor<'a> {
     }
 
     fn take(&mut self, len: usize) -> Result<&'a [u8], OutboxError> {
-        let end = self.pos.checked_add(len).ok_or(OutboxError::CorruptRecord)?;
+        let end = self
+            .pos
+            .checked_add(len)
+            .ok_or(OutboxError::CorruptRecord)?;
         let value = self
             .bytes
             .get(self.pos..end)
@@ -243,8 +246,7 @@ mod tests {
             let mut store = Store::open(&path).unwrap();
             let mut tx = store.begin().unwrap();
             tx.put(b"invoice:42", b"paid").unwrap();
-            tx.enqueue_job(JobSpec::new(b"receipt", b"42"), 10)
-                .unwrap();
+            tx.enqueue_job(JobSpec::new(b"receipt", b"42"), 10).unwrap();
             event_id = tx.emit_event(b"invoice.paid", b"42", 10).unwrap();
             tx.commit().unwrap();
 
