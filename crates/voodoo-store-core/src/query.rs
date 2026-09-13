@@ -13,17 +13,12 @@ const INDEX_META_PREFIX: &[u8] = b"\xffvds:col:index-meta:";
 const INDEX_PREFIX: &[u8] = b"\xffvds:col:index:";
 const COLLECTION_FORMAT_VERSION: u8 = 1;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum QueryBound {
+    #[default]
     Unbounded,
     Included(Vec<u8>),
     Excluded(Vec<u8>),
-}
-
-impl Default for QueryBound {
-    fn default() -> Self {
-        Self::Unbounded
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
