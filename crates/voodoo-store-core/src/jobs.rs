@@ -132,22 +132,8 @@ impl Store {
             }
         }
 
-        let id = random_id()?;
-        let job = DurableJob {
-            id,
-            state: DurableJobState::Ready,
-            handler: spec.handler,
-            payload: spec.payload,
-            available_at_ms: spec.available_at_ms,
-            deadline_ms: spec.deadline_ms,
-            priority: spec.priority,
-            attempts: 0,
-            max_attempts: spec.max_attempts,
-            retry_backoff_ms: spec.retry_backoff_ms,
-            lease_until_ms: 0,
-            lease_generation: 0,
-            idempotency_key: spec.idempotency_key,
-        };
+        let job = build_job(spec)?;
+        let id = job.id;
         let mut tx = self.begin()?;
         tx.put_internal(job_key(&id), encode_job(&job)?)?;
         append_history_tx(
@@ -180,31 +166,41 @@ impl Store {
             .checked_add(lease_duration)
             .ok_or(JobError::TimeOverflow)?;
         let mut candidate: Option<DurableJob> = None;
+        let mut expired = Vec::new();
 
         for (_, encoded) in self.scan_prefix(JOB_PREFIX) {
             let job = decode_job(&encoded)?;
-            if job.state == DurableJobState::Ready && job.available_at_ms <= now_ms {
-                if job.deadline_ms.is_some_and(|deadline| deadline <= now_ms) {
-                    continue;
-                }
-                let replace = candidate.as_ref().is_none_or(|current| {
-                    job.priority > current.priority
-                        || (job.priority == current.priority
-                            && job.available_at_ms < current.available_at_ms)
-                });
-                if replace {
-                    candidate = Some(job);
-                }
-            } else if job.state == DurableJobState::Leased && job.lease_until_ms <= now_ms {
-                let replace = candidate.as_ref().is_none_or(|current| {
-                    job.priority > current.priority
-                        || (job.priority == current.priority
-                            && job.available_at_ms < current.available_at_ms)
-                });
-                if replace {
-                    candidate = Some(job);
-                }
+            let reclaimable = job.state == DurableJobState::Ready
+                || (job.state == DurableJobState::Leased && job.lease_until_ms <= now_ms);
+            if !reclaimable {
+                continue;
             }
+            if job.deadline_ms.is_some_and(|deadline| deadline <= now_ms) {
+                expired.push(job);
+                continue;
+            }
+            if job.state == DurableJobState::Ready && job.available_at_ms > now_ms {
+                continue;
+            }
+            let replace = candidate.as_ref().is_none_or(|current| {
+                job.priority > current.priority
+                    || (job.priority == current.priority
+                        && job.available_at_ms < current.available_at_ms)
+            });
+            if replace {
+                candidate = Some(job);
+            }
+        }
+
+        for mut job in expired {
+            job.state = DurableJobState::Dead;
+            job.lease_until_ms = 0;
+            self.persist_job_with_history(
+                &job,
+                now_ms,
+                JobHistoryKind::Dead,
+                b"deadline exceeded",
+            )?;
         }
 
         let Some(mut job) = candidate else {
@@ -217,9 +213,8 @@ impl Store {
         if job.attempts > job.max_attempts {
             job.state = DurableJobState::Dead;
             job.lease_until_ms = 0;
-            self.put_internal(job_key(&job.id), encode_job(&job)?)?;
-            self.append_job_history(
-                &job.id,
+            self.persist_job_with_history(
+                &job,
                 now_ms,
                 JobHistoryKind::Dead,
                 b"max attempts exceeded",
@@ -229,9 +224,7 @@ impl Store {
         job.state = DurableJobState::Leased;
         job.lease_until_ms = lease_until_ms;
         job.lease_generation = job.attempts;
-        let id = job.id;
-        self.put_internal(job_key(&id), encode_job(&job)?)?;
-        self.append_job_history(&id, now_ms, JobHistoryKind::Claimed, &[])?;
+        self.persist_job_with_history(&job, now_ms, JobHistoryKind::Claimed, &[])?;
         Ok(Some(job))
     }
 
@@ -245,8 +238,7 @@ impl Store {
         validate_job_lease(&job, lease_generation)?;
         job.state = DurableJobState::Completed;
         job.lease_until_ms = 0;
-        self.put_internal(job_key(id), encode_job(&job)?)?;
-        self.append_job_history(id, now_ms, JobHistoryKind::Completed, &[])
+        self.persist_job_with_history(&job, now_ms, JobHistoryKind::Completed, &[])
     }
 
     pub fn fail_job(
@@ -274,8 +266,7 @@ impl Store {
             job.state = DurableJobState::Ready;
             kind = JobHistoryKind::RetryScheduled;
         }
-        self.put_internal(job_key(id), encode_job(&job)?)?;
-        self.append_job_history(id, now_ms, kind, detail.as_ref())?;
+        self.persist_job_with_history(&job, now_ms, kind, detail.as_ref())?;
         Ok(job.state)
     }
 
@@ -291,8 +282,7 @@ impl Store {
         }
         job.state = DurableJobState::Cancelled;
         job.lease_until_ms = 0;
-        self.put_internal(job_key(id), encode_job(&job)?)?;
-        self.append_job_history(id, now_ms, JobHistoryKind::Cancelled, &[])?;
+        self.persist_job_with_history(&job, now_ms, JobHistoryKind::Cancelled, &[])?;
         Ok(true)
     }
 
@@ -361,10 +351,15 @@ impl Store {
             if !schedule.enabled || schedule.next_run_ms > now_ms {
                 continue;
             }
+
+            let scheduled_at = schedule.next_run_ms;
             let mut spec = schedule.job.clone();
-            spec.available_at_ms = schedule.next_run_ms;
-            self.submit_job(spec, now_ms)?;
-            fired += 1;
+            spec.available_at_ms = scheduled_at;
+            if let Some(key) = spec.idempotency_key.as_mut() {
+                key.extend_from_slice(&scheduled_at.to_be_bytes());
+            }
+            let job = build_job(spec)?;
+
             match schedule.mode {
                 ScheduleMode::Once => schedule.enabled = false,
                 ScheduleMode::Interval { every_ms } => {
@@ -376,26 +371,45 @@ impl Store {
                     schedule.next_run_ms = next;
                 }
             }
-            self.put_internal(schedule_key(&schedule.id), encode_schedule(&schedule)?)?;
+
+            let mut tx = self.begin()?;
+            tx.put_internal(job_key(&job.id), encode_job(&job)?)?;
+            append_history_tx(
+                &mut tx,
+                &job.id,
+                0,
+                JobHistoryEntry {
+                    sequence: 0,
+                    at_ms: now_ms,
+                    kind: JobHistoryKind::Submitted,
+                    detail: b"scheduled".to_vec(),
+                },
+            )?;
+            tx.put_internal(schedule_key(&schedule.id), encode_schedule(&schedule)?)?;
+            tx.commit()?;
+            fired += 1;
         }
         Ok(SchedulerTickReport { scanned, fired })
     }
 
-    fn append_job_history(
+    fn persist_job_with_history(
         &mut self,
-        id: &JobId,
+        job: &DurableJob,
         at_ms: i64,
         kind: JobHistoryKind,
         detail: &[u8],
     ) -> Result<(), JobError> {
-        let sequence = self.next_history_sequence(id)?;
+        let sequence = self.next_history_sequence(&job.id)?;
         let entry = JobHistoryEntry {
             sequence,
             at_ms,
             kind,
             detail: detail.to_vec(),
         };
-        self.put_internal(history_key(id, sequence), encode_history(&entry)?)?;
+        let mut tx = self.begin()?;
+        tx.put_internal(job_key(&job.id), encode_job(job)?)?;
+        append_history_tx(&mut tx, &job.id, sequence, entry)?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -441,6 +455,25 @@ fn validate_job_lease(job: &DurableJob, generation: u32) -> Result<(), JobError>
         });
     }
     Ok(())
+}
+
+fn build_job(spec: JobSpec) -> Result<DurableJob, JobError> {
+    validate_job_spec(&spec)?;
+    Ok(DurableJob {
+        id: random_id()?,
+        state: DurableJobState::Ready,
+        handler: spec.handler,
+        payload: spec.payload,
+        available_at_ms: spec.available_at_ms,
+        deadline_ms: spec.deadline_ms,
+        priority: spec.priority,
+        attempts: 0,
+        max_attempts: spec.max_attempts,
+        retry_backoff_ms: spec.retry_backoff_ms,
+        lease_until_ms: 0,
+        lease_generation: 0,
+        idempotency_key: spec.idempotency_key,
+    })
 }
 
 fn random_id() -> Result<[u8; 16], JobError> {
@@ -811,6 +844,26 @@ mod tests {
     }
 
     #[test]
+    fn deadline_expiry_marks_job_dead_with_history() {
+        let path = temp_store_path("deadline");
+        let mut store = Store::open(&path).unwrap();
+        let mut spec = JobSpec::new(b"expire".to_vec(), Vec::new());
+        spec.deadline_ms = Some(10);
+        let id = store.submit_job(spec, 0).unwrap();
+
+        assert!(store.claim_job(10, 100).unwrap().is_none());
+        let job = store.get_job(&id).unwrap().unwrap();
+        assert_eq!(job.state, DurableJobState::Dead);
+        let history = store.job_history(&id).unwrap();
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[1].kind, JobHistoryKind::Dead);
+        assert_eq!(history[1].detail, b"deadline exceeded");
+
+        drop(store);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn idempotency_key_reuses_existing_job() {
         let path = temp_store_path("idempotency");
         let mut store = Store::open(&path).unwrap();
@@ -846,6 +899,9 @@ mod tests {
                     .next_run_ms,
                 350
             );
+            let claimed = store.claim_job(250, 100).unwrap().unwrap();
+            assert_eq!(claimed.handler, b"heartbeat");
+            assert_eq!(store.job_history(&claimed.id).unwrap().len(), 2);
         }
         {
             let store = Store::open(&path).unwrap();
