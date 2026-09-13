@@ -16,9 +16,16 @@ pub type TriggerId = [u8; 16];
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TriggerSource {
     Manual,
-    Collection { collection: Vec<u8>, operation: Vec<u8> },
-    Stream { stream: Vec<u8> },
-    Topic { topic: Vec<u8> },
+    Collection {
+        collection: Vec<u8>,
+        operation: Vec<u8>,
+    },
+    Stream {
+        stream: Vec<u8>,
+    },
+    Topic {
+        topic: Vec<u8>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -337,7 +344,10 @@ impl<'a> Cursor<'a> {
     }
 
     fn take(&mut self, len: usize) -> Result<&'a [u8], TriggerError> {
-        let end = self.pos.checked_add(len).ok_or(TriggerError::CorruptRecord)?;
+        let end = self
+            .pos
+            .checked_add(len)
+            .ok_or(TriggerError::CorruptRecord)?;
         let value = self
             .bytes
             .get(self.pos..end)
