@@ -178,7 +178,10 @@ impl Store {
                 break;
             }
             let request = decode_request(&encoded)?;
-            if request.deadline_ms.is_some_and(|deadline| deadline <= now_ms) {
+            if request
+                .deadline_ms
+                .is_some_and(|deadline| deadline <= now_ms)
+            {
                 self.respond_rpc(request.id, b"deadline exceeded", now_ms, true)?;
                 expired += 1;
             }
@@ -303,7 +306,10 @@ impl<'a> Cursor<'a> {
 
     fn take(&mut self, len: usize) -> Result<&'a [u8], RpcError> {
         let end = self.pos.checked_add(len).ok_or(RpcError::CorruptRecord)?;
-        let value = self.bytes.get(self.pos..end).ok_or(RpcError::CorruptRecord)?;
+        let value = self
+            .bytes
+            .get(self.pos..end)
+            .ok_or(RpcError::CorruptRecord)?;
         self.pos = end;
         Ok(value)
     }
@@ -384,7 +390,12 @@ mod tests {
         }
         {
             let store = Store::open(&path).unwrap();
-            assert!(store.pending_rpc_requests_after(None, 10).unwrap().is_empty());
+            assert!(
+                store
+                    .pending_rpc_requests_after(None, 10)
+                    .unwrap()
+                    .is_empty()
+            );
             let response = store.get_rpc_response(id).unwrap().unwrap();
             assert_eq!(response.payload, b"3");
             assert!(!response.is_error);
@@ -400,13 +411,14 @@ mod tests {
         {
             let mut tx = store.begin().unwrap();
             tx.put(b"payment:7", b"pending").unwrap();
-            id = tx
-                .request_rpc(b"charge", b"7", 1, Some(100))
-                .unwrap();
+            id = tx.request_rpc(b"charge", b"7", 1, Some(100)).unwrap();
             tx.commit().unwrap();
         }
         assert_eq!(store.get(b"payment:7"), Some(b"pending".as_slice()));
-        assert_eq!(store.pending_rpc_requests_after(None, 10).unwrap()[0].id, id);
+        assert_eq!(
+            store.pending_rpc_requests_after(None, 10).unwrap()[0].id,
+            id
+        );
         let _ = fs::remove_file(path);
     }
 
