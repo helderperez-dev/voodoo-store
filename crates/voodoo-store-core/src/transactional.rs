@@ -6,12 +6,7 @@
 
 use thiserror::Error;
 
-use crate::{EngineError, JobId, JobSpec, Transaction};
-
-const JOB_PREFIX: &[u8] = b"\xffvds:job:data:";
-const HISTORY_PREFIX: &[u8] = b"\xffvds:job:history:";
-const JOB_VERSION: u8 = 1;
-const JOB_FIXED_LEN: usize = 66;
+use crate::{EngineError, JobError, JobId, JobSpec, Transaction};
 
 impl Transaction<'_> {
     /// Enqueues a durable job in this transaction.
@@ -20,25 +15,11 @@ impl Transaction<'_> {
     /// if the surrounding transaction commits. This means application state
     /// and background work can share one durability boundary.
     ///
-    /// Idempotency lookup uses the transaction's staged view, so an existing
-    /// committed job or a job enqueued earlier in this same transaction is
-    /// reused rather than duplicated.
+    /// Job validation, v1 wire encoding, history encoding, and idempotency
+    /// lookup are owned by the Jobs module. This wrapper deliberately contains
+    /// no persisted Job-format knowledge.
     pub fn enqueue_job(&mut self, spec: JobSpec, now_ms: i64) -> Result<JobId, TransactionalError> {
-        validate_job_spec(&spec)?;
-        if let Some(key) = spec.idempotency_key.as_deref() {
-            if let Some(existing) = find_job_by_idempotency(self, key)? {
-                return Ok(existing);
-            }
-        }
-
-        let id = random_id()?;
-        let encoded = encode_new_job(id, &spec)?;
-        self.put_internal(job_key(&id), encoded)?;
-        self.put_internal(
-            history_key(&id, 0),
-            encode_submitted_history(now_ms, b"transactional")?,
-        )?;
-        Ok(id)
+        crate::jobs::enqueue_job_tx(self, spec, now_ms, b"transactional").map_err(map_job_error)
     }
 }
 
@@ -56,142 +37,20 @@ pub enum TransactionalError {
     CorruptJobRecord,
     #[error("operating-system entropy is unavailable")]
     EntropyUnavailable,
+    #[error("job transaction error: {0}")]
+    Job(String),
 }
 
-fn validate_job_spec(spec: &JobSpec) -> Result<(), TransactionalError> {
-    if spec.handler.is_empty() {
-        return Err(TransactionalError::EmptyHandler);
+fn map_job_error(error: JobError) -> TransactionalError {
+    match error {
+        JobError::Store(error) => TransactionalError::Store(error),
+        JobError::EmptyHandler => TransactionalError::EmptyHandler,
+        JobError::InvalidMaxAttempts => TransactionalError::InvalidMaxAttempts,
+        JobError::FieldTooLarge => TransactionalError::FieldTooLarge,
+        JobError::CorruptRecord => TransactionalError::CorruptJobRecord,
+        JobError::EntropyUnavailable => TransactionalError::EntropyUnavailable,
+        other => TransactionalError::Job(other.to_string()),
     }
-    if spec.max_attempts == 0 {
-        return Err(TransactionalError::InvalidMaxAttempts);
-    }
-    Ok(())
-}
-
-fn random_id() -> Result<JobId, TransactionalError> {
-    let mut id = [0u8; 16];
-    getrandom::fill(&mut id).map_err(|_| TransactionalError::EntropyUnavailable)?;
-    Ok(id)
-}
-
-fn job_key(id: &JobId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(JOB_PREFIX.len() + id.len());
-    key.extend_from_slice(JOB_PREFIX);
-    key.extend_from_slice(id);
-    key
-}
-
-fn history_key(id: &JobId, sequence: u64) -> Vec<u8> {
-    let mut key = Vec::with_capacity(HISTORY_PREFIX.len() + id.len() + 8);
-    key.extend_from_slice(HISTORY_PREFIX);
-    key.extend_from_slice(id);
-    key.extend_from_slice(&sequence.to_be_bytes());
-    key
-}
-
-fn append_len(out: &mut Vec<u8>, bytes: &[u8]) -> Result<(), TransactionalError> {
-    let len = u32::try_from(bytes.len()).map_err(|_| TransactionalError::FieldTooLarge)?;
-    out.extend_from_slice(&len.to_le_bytes());
-    out.extend_from_slice(bytes);
-    Ok(())
-}
-
-fn read_len<'a>(bytes: &'a [u8], cursor: &mut usize) -> Result<&'a [u8], TransactionalError> {
-    let length_end = cursor
-        .checked_add(4)
-        .ok_or(TransactionalError::CorruptJobRecord)?;
-    let length_bytes = bytes
-        .get(*cursor..length_end)
-        .ok_or(TransactionalError::CorruptJobRecord)?;
-    let len = u32::from_le_bytes(
-        length_bytes
-            .try_into()
-            .map_err(|_| TransactionalError::CorruptJobRecord)?,
-    ) as usize;
-    *cursor = length_end;
-    let end = cursor
-        .checked_add(len)
-        .ok_or(TransactionalError::CorruptJobRecord)?;
-    let value = bytes
-        .get(*cursor..end)
-        .ok_or(TransactionalError::CorruptJobRecord)?;
-    *cursor = end;
-    Ok(value)
-}
-
-fn find_job_by_idempotency(
-    tx: &Transaction<'_>,
-    key: &[u8],
-) -> Result<Option<JobId>, TransactionalError> {
-    for (_, encoded) in tx.scan_prefix_internal(JOB_PREFIX) {
-        let (id, idempotency_key) = decode_job_identity(&encoded)?;
-        if idempotency_key.as_deref() == Some(key) {
-            return Ok(Some(id));
-        }
-    }
-    Ok(None)
-}
-
-fn decode_job_identity(bytes: &[u8]) -> Result<(JobId, Option<Vec<u8>>), TransactionalError> {
-    if bytes.len() < JOB_FIXED_LEN || bytes[0] != JOB_VERSION {
-        return Err(TransactionalError::CorruptJobRecord);
-    }
-    let id = bytes[2..18]
-        .try_into()
-        .map_err(|_| TransactionalError::CorruptJobRecord)?;
-    let mut cursor = JOB_FIXED_LEN;
-    let _handler = read_len(bytes, &mut cursor)?;
-    let _payload = read_len(bytes, &mut cursor)?;
-    let flag = *bytes
-        .get(cursor)
-        .ok_or(TransactionalError::CorruptJobRecord)?;
-    cursor += 1;
-    let idempotency_key = match flag {
-        0 => None,
-        1 => Some(read_len(bytes, &mut cursor)?.to_vec()),
-        _ => return Err(TransactionalError::CorruptJobRecord),
-    };
-    if cursor != bytes.len() {
-        return Err(TransactionalError::CorruptJobRecord);
-    }
-    Ok((id, idempotency_key))
-}
-
-/// Encodes exactly the v1 representation consumed by `jobs::decode_job`.
-fn encode_new_job(id: JobId, spec: &JobSpec) -> Result<Vec<u8>, TransactionalError> {
-    let mut out = Vec::new();
-    out.push(JOB_VERSION);
-    out.push(0); // DurableJobState::Ready
-    out.extend_from_slice(&id);
-    out.extend_from_slice(&spec.available_at_ms.to_le_bytes());
-    out.extend_from_slice(&spec.deadline_ms.unwrap_or(i64::MIN).to_le_bytes());
-    out.extend_from_slice(&spec.priority.to_le_bytes());
-    out.extend_from_slice(&0u32.to_le_bytes()); // attempts
-    out.extend_from_slice(&spec.max_attempts.to_le_bytes());
-    out.extend_from_slice(&spec.retry_backoff_ms.to_le_bytes());
-    out.extend_from_slice(&0i64.to_le_bytes()); // lease_until_ms
-    out.extend_from_slice(&0u32.to_le_bytes()); // lease_generation
-    append_len(&mut out, &spec.handler)?;
-    append_len(&mut out, &spec.payload)?;
-    match &spec.idempotency_key {
-        Some(key) => {
-            out.push(1);
-            append_len(&mut out, key)?;
-        }
-        None => out.push(0),
-    }
-    Ok(out)
-}
-
-/// Encodes exactly the v1 representation consumed by `jobs::decode_history`.
-fn encode_submitted_history(at_ms: i64, detail: &[u8]) -> Result<Vec<u8>, TransactionalError> {
-    let mut out = Vec::new();
-    out.push(JOB_VERSION);
-    out.extend_from_slice(&0u64.to_le_bytes()); // sequence
-    out.extend_from_slice(&at_ms.to_le_bytes());
-    out.push(0); // JobHistoryKind::Submitted
-    append_len(&mut out, detail)?;
-    Ok(out)
 }
 
 #[cfg(test)]
