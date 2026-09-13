@@ -7,6 +7,7 @@
 
 pub mod atomic;
 pub mod cdc;
+pub mod checkpoint;
 pub mod collection;
 pub mod compaction;
 pub mod consumer_group;
@@ -34,6 +35,7 @@ pub mod workflow;
 
 pub use atomic::{AtomicError, CasOutcome};
 pub use cdc::{ChangeFeedError, ChangeKind, ChangeRecord};
+pub use checkpoint::{CheckpointError, CheckpointReport};
 pub use collection::{
     CollectionDefinition, CollectionError, CollectionRecord, IndexDefinition, IndexValue,
 };
