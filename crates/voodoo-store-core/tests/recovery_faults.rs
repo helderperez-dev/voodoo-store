@@ -22,6 +22,10 @@ fn encode_put_payload(key: &[u8], value: &[u8]) -> Vec<u8> {
     payload
 }
 
+fn next_sequence(path: &PathBuf) -> u64 {
+    Store::verify(path).unwrap().records + 1
+}
+
 #[test]
 fn every_incomplete_final_record_prefix_is_repaired_without_losing_committed_state() {
     let baseline = temp_store_path("baseline");
@@ -30,11 +34,12 @@ fn every_incomplete_final_record_prefix_is_repaired_without_losing_committed_sta
         store.put(b"safe", b"committed").unwrap();
     }
 
+    let sequence = next_sequence(&baseline);
     let baseline_bytes = fs::read(&baseline).unwrap();
     let trailing_record = LogRecord::new(
         RecordKind::Put,
         2,
-        3,
+        sequence,
         encode_put_payload(b"ghost", b"uncommitted"),
     )
     .encode()
@@ -72,7 +77,7 @@ fn complete_uncommitted_record_is_ignored_but_not_misreported_as_committed() {
     let record = LogRecord::new(
         RecordKind::Put,
         2,
-        3,
+        next_sequence(&path),
         encode_put_payload(b"ghost", b"pending"),
     )
     .encode()
