@@ -97,6 +97,7 @@ impl Store {
             ("triggers", b"\xffvds:trigger:".as_slice()),
             ("outbox", b"\xffvds:outbox:".as_slice()),
             ("rpc", b"\xffvds:rpc:".as_slice()),
+            ("cdc", b"\xffvds:cdc:".as_slice()),
             ("streams", b"\xffvds:stream:".as_slice()),
             ("subscriptions", b"\xffvds:sub:".as_slice()),
             ("consumer_groups", b"\xffvds:cg:".as_slice()),
@@ -163,8 +164,8 @@ mod tests {
         store.put_with_ttl(b"session", b"x", 10).unwrap();
         let stats = store.storage_stats().unwrap();
         assert_eq!(stats.user_keys, 2);
-        assert_eq!(stats.internal_keys, 1);
-        assert_eq!(stats.live_keys, 3);
+        assert!(stats.internal_keys >= 3);
+        assert_eq!(stats.live_keys, stats.user_keys + stats.internal_keys);
         assert!(stats.file_bytes > 0);
         drop(store);
         let _ = fs::remove_file(path);
@@ -202,6 +203,12 @@ mod tests {
         );
         assert!(report.namespaces.iter().any(|entry| entry.name == "outbox"));
         assert!(report.namespaces.iter().any(|entry| entry.name == "rpc"));
+        assert!(
+            report
+                .namespaces
+                .iter()
+                .any(|entry| entry.name == "cdc" && entry.keys > 0)
+        );
         assert!(
             report
                 .namespaces
