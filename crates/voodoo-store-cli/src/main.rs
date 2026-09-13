@@ -51,7 +51,10 @@ fn run() -> Result<(), Box<dyn Error>> {
             println!("user_keys={}", report.storage.user_keys);
             println!("internal_keys={}", report.storage.internal_keys);
             println!("live_bytes={}", report.storage.live_bytes());
-            println!("amplification={:.3}", report.storage.amplification_ratio());
+            println!(
+                "amplification={:.3}",
+                report.storage.amplification_ratio()
+            );
             for namespace in report.namespaces {
                 println!(
                     "namespace.{}.keys={} namespace.{}.value_bytes={}",
@@ -126,12 +129,16 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
         "collection-create" => {
             if args.len() < 4 || args.len() > 5 {
-                return Err("usage: voodoo-store collection-create <store> <collection> [codec]".into());
+                return Err(
+                    "usage: voodoo-store collection-create <store> <collection> [codec]".into(),
+                );
             }
             let mut store = Store::open(&args[2])?;
             let definition = CollectionDefinition {
                 schema_version: 1,
-                codec: args.get(4).map_or(b"bytes".to_vec(), |value| value.as_bytes().to_vec()),
+                codec: args
+                    .get(4)
+                    .map_or(b"bytes".to_vec(), |value| value.as_bytes().to_vec()),
             };
             println!(
                 "created={}",
@@ -140,7 +147,10 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
         "collection-index" => {
             if args.len() < 5 || args.len() > 6 {
-                return Err("usage: voodoo-store collection-index <store> <collection> <index> [unique]".into());
+                return Err(
+                    "usage: voodoo-store collection-index <store> <collection> <index> [unique]"
+                        .into(),
+                );
             }
             let unique = args.get(5).is_some_and(|value| value == "unique");
             let mut store = Store::open(&args[2])?;
@@ -177,7 +187,10 @@ fn run() -> Result<(), Box<dyn Error>> {
             let store = Store::open(&args[2])?;
             match store.get_record(args[3].as_bytes(), args[4].as_bytes())? {
                 Some(record) => {
-                    println!("primary_key={}", String::from_utf8_lossy(&record.primary_key));
+                    println!(
+                        "primary_key={}",
+                        String::from_utf8_lossy(&record.primary_key)
+                    );
                     println!("value={}", String::from_utf8_lossy(&record.value));
                     for index in record.indexes {
                         println!(
@@ -232,7 +245,11 @@ fn run() -> Result<(), Box<dyn Error>> {
             let mut store = Store::open(&args[2])?;
             let stream = store.stream(args[3].as_bytes())?;
             for entry in stream.read_from(offset, limit)? {
-                println!("{}\t{}", entry.offset, String::from_utf8_lossy(&entry.payload));
+                println!(
+                    "{}\t{}",
+                    entry.offset,
+                    String::from_utf8_lossy(&entry.payload)
+                );
             }
         }
         "topic-publish" => {
@@ -247,7 +264,11 @@ fn run() -> Result<(), Box<dyn Error>> {
             let mut store = Store::open(&args[2])?;
             let topic = store.topic(args[3].as_bytes())?;
             for entry in topic.poll(args[4].as_bytes(), limit)? {
-                println!("{}\t{}", entry.offset, String::from_utf8_lossy(&entry.payload));
+                println!(
+                    "{}\t{}",
+                    entry.offset,
+                    String::from_utf8_lossy(&entry.payload)
+                );
             }
         }
         "topic-ack" => {
@@ -494,10 +515,21 @@ fn run() -> Result<(), Box<dyn Error>> {
 
 fn queue_push(args: &[String]) -> Result<(), Box<dyn Error>> {
     if args.len() < 5 || args.len() > 7 {
-        return Err("usage: voodoo-store queue-push <store> <queue> <payload> [available_at_ms] [priority]".into());
+        return Err(
+            "usage: voodoo-store queue-push <store> <queue> <payload> [available_at_ms] [priority]"
+                .into(),
+        );
     }
-    let available_at_ms = args.get(5).map(|value| value.parse()).transpose()?.unwrap_or(0);
-    let priority = args.get(6).map(|value| value.parse()).transpose()?.unwrap_or(0);
+    let available_at_ms = args
+        .get(5)
+        .map(|value| value.parse())
+        .transpose()?
+        .unwrap_or(0);
+    let priority = args
+        .get(6)
+        .map(|value| value.parse())
+        .transpose()?
+        .unwrap_or(0);
     let mut store = Store::open(&args[2])?;
     let mut queue = store.queue(args[3].as_bytes())?;
     let id = queue.push_with_options(
@@ -536,7 +568,9 @@ fn queue_ack(args: &[String]) -> Result<(), Box<dyn Error>> {
     let id: u64 = args[4].parse()?;
     let lease_generation: u32 = args[5].parse()?;
     let mut store = Store::open(&args[2])?;
-    store.queue(args[3].as_bytes())?.ack(id, lease_generation)?;
+    store
+        .queue(args[3].as_bytes())?
+        .ack(id, lease_generation)?;
     println!("ok");
     Ok(())
 }
@@ -547,7 +581,9 @@ fn queue_nack(args: &[String]) -> Result<(), Box<dyn Error>> {
     let lease_generation: u32 = args[5].parse()?;
     let available_at_ms: i64 = args[6].parse()?;
     let mut store = Store::open(&args[2])?;
-    store.queue(args[3].as_bytes())?.nack(id, lease_generation, available_at_ms)?;
+    store
+        .queue(args[3].as_bytes())?
+        .nack(id, lease_generation, available_at_ms)?;
     println!("ok");
     Ok(())
 }
@@ -557,7 +593,9 @@ fn queue_dead(args: &[String]) -> Result<(), Box<dyn Error>> {
     let id: u64 = args[4].parse()?;
     let lease_generation: u32 = args[5].parse()?;
     let mut store = Store::open(&args[2])?;
-    store.queue(args[3].as_bytes())?.dead_letter(id, lease_generation)?;
+    store
+        .queue(args[3].as_bytes())?
+        .dead_letter(id, lease_generation)?;
     println!("ok");
     Ok(())
 }
