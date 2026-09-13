@@ -11,7 +11,7 @@ pub mod log;
 pub mod model;
 
 pub use engine::{EngineError, Store, Transaction};
-pub use header::{HeaderError, StoreHeader, FORMAT_MAJOR, FORMAT_MINOR, STORE_HEADER_LEN};
+pub use header::{FORMAT_MAJOR, FORMAT_MINOR, HeaderError, STORE_HEADER_LEN, StoreHeader};
 pub use log::{LogRecord, RecordKind, StoreError};
 pub use model::{
     DeliverySemantics, DestinationKind, JobState, MessageEnvelope, ScheduleKind, TraceContext,
