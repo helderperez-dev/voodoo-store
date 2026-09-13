@@ -21,6 +21,7 @@ pub mod model;
 pub mod objects;
 pub mod operations;
 pub mod outbox;
+pub mod query;
 pub mod queue;
 pub mod restore;
 pub mod rpc;
@@ -54,6 +55,7 @@ pub use model::{
 pub use objects::{ObjectError, ObjectGcReport, ObjectId, ObjectInfo};
 pub use operations::{HealthReport, NamespaceStats, OperationsError, StorageStats};
 pub use outbox::{OutboxError, OutboxEvent, OutboxEventId};
+pub use query::{IndexRangeQuery, IndexedRecord, QueryBound, QueryError, QueryOrder};
 pub use queue::{PushOptions, Queue, QueueError, QueueMessage, QueueState, QueueStats};
 pub use restore::RestoreReport;
 pub use rpc::{RpcError, RpcExpireReport, RpcRequest, RpcRequestId, RpcResponse};
