@@ -37,14 +37,9 @@ fn every_single_byte_header_mutation_is_rejected() {
 
 #[test]
 fn decoder_rejects_truncation_at_every_record_boundary() {
-    let encoded = LogRecord::new(
-        RecordKind::Put,
-        7,
-        11,
-        b"truncation-matrix".to_vec(),
-    )
-    .encode()
-    .unwrap();
+    let encoded = LogRecord::new(RecordKind::Put, 7, 11, b"truncation-matrix".to_vec())
+        .encode()
+        .unwrap();
 
     for len in 0..encoded.len() {
         assert!(
