@@ -12,11 +12,8 @@ use crate::log::{HEADER_LEN, LogRecord, RecordKind, StoreError, encoded_record_l
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Durability {
-    /// Synchronize file data and metadata on every commit.
     Strict,
-    /// Synchronize file data on every commit. This is the default.
     Data,
-    /// Rely on the operating system to flush dirty pages later.
     Relaxed,
 }
 
@@ -81,12 +78,12 @@ impl Store {
         let path = path.as_ref().to_path_buf();
         let mut file = OpenOptions::new()
             .create(true)
+            .truncate(false)
             .read(true)
             .write(true)
             .open(&path)?;
 
         FileExt::try_lock_exclusive(&file).map_err(map_lock_error)?;
-
         let header = load_or_initialize_header(&mut file)?;
         let recovery = recover(&mut file)?;
 
@@ -201,7 +198,6 @@ impl Store {
     pub fn begin(&mut self) -> Result<Transaction<'_>, EngineError> {
         let tx_id = self.next_tx_id;
         self.next_tx_id = tx_id.checked_add(1).ok_or(EngineError::CounterExhausted)?;
-
         Ok(Transaction {
             store: self,
             tx_id,
@@ -313,11 +309,9 @@ fn load_or_initialize_header(file: &mut File) -> Result<StoreHeader, EngineError
         file.sync_all()?;
         return Ok(header);
     }
-
     if len < STORE_HEADER_LEN as u64 {
         return Err(HeaderError::Truncated.into());
     }
-
     let mut bytes = [0u8; STORE_HEADER_LEN];
     file.seek(SeekFrom::Start(0))?;
     file.read_exact(&mut bytes)?;
@@ -342,7 +336,6 @@ fn recover(file: &mut File) -> Result<Recovery, EngineError> {
         if remaining.len() < HEADER_LEN {
             break;
         }
-
         let record_len = match encoded_record_len_from_prefix(remaining) {
             Ok(len) => len,
             Err(StoreError::TruncatedRecord) => break,
@@ -351,7 +344,6 @@ fn recover(file: &mut File) -> Result<Recovery, EngineError> {
         if remaining.len() < record_len {
             break;
         }
-
         let record = LogRecord::decode(&remaining[..record_len])?;
         if record.sequence <= max_sequence && max_sequence != 0 {
             return Err(EngineError::NonMonotonicSequence {
@@ -362,13 +354,11 @@ fn recover(file: &mut File) -> Result<Recovery, EngineError> {
         if committed.contains(&record.tx_id) {
             return Err(EngineError::RecordAfterCommit(record.tx_id));
         }
-
         max_sequence = record.sequence;
         max_tx_id = max_tx_id.max(record.tx_id);
         records = records
             .checked_add(1)
             .ok_or(EngineError::CounterExhausted)?;
-
         match record.kind {
             RecordKind::Put => pending
                 .entry(record.tx_id)
@@ -385,7 +375,6 @@ fn recover(file: &mut File) -> Result<Recovery, EngineError> {
                 committed.insert(record.tx_id);
             }
         }
-
         offset += record_len;
     }
 
@@ -569,11 +558,11 @@ mod tests {
         store.put(b"user:2", b"B").unwrap();
         store.put(b"user:1", b"A").unwrap();
         store.put(b"other", b"X").unwrap();
-
         let entries = store.scan_prefix(b"user:");
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0], (b"user:1".to_vec(), b"A".to_vec()));
         assert_eq!(entries[1], (b"user:2".to_vec(), b"B".to_vec()));
+        drop(store);
         let _ = fs::remove_file(path);
     }
 
@@ -623,9 +612,11 @@ mod tests {
             file.write_all(b"VDS1\x01\x02").unwrap();
         }
         assert!(fs::metadata(&path).unwrap().len() > valid_len);
-        let store = Store::open(&path).unwrap();
-        assert_eq!(store.get(b"safe"), Some(b"value".as_slice()));
-        assert_eq!(fs::metadata(&path).unwrap().len(), valid_len);
+        {
+            let store = Store::open(&path).unwrap();
+            assert_eq!(store.get(b"safe"), Some(b"value".as_slice()));
+            assert_eq!(fs::metadata(&path).unwrap().len(), valid_len);
+        }
         let _ = fs::remove_file(path);
     }
 
@@ -671,6 +662,7 @@ mod tests {
         }
         let store = Store::open(&path).unwrap();
         assert_eq!(store.get(b"key"), None);
+        drop(store);
         let _ = fs::remove_file(path);
     }
 
@@ -686,6 +678,7 @@ mod tests {
         }
         let store = Store::open(&path).unwrap();
         assert_eq!(store.get(b"a"), None);
+        drop(store);
         let _ = fs::remove_file(path);
     }
 }
