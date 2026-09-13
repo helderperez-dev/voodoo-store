@@ -18,11 +18,7 @@ impl Transaction<'_> {
     /// The job record and its initial history entry become visible if and only
     /// if the surrounding transaction commits. This means application state
     /// and background work can share one durability boundary.
-    pub fn enqueue_job(
-        &mut self,
-        spec: JobSpec,
-        now_ms: i64,
-    ) -> Result<JobId, TransactionalError> {
+    pub fn enqueue_job(&mut self, spec: JobSpec, now_ms: i64) -> Result<JobId, TransactionalError> {
         validate_job_spec(&spec)?;
         let id = random_id()?;
         let encoded = encode_new_job(id, &spec)?;
@@ -114,10 +110,7 @@ fn encode_new_job(id: JobId, spec: &JobSpec) -> Result<Vec<u8>, TransactionalErr
 }
 
 /// Encodes exactly the v1 representation consumed by `jobs::decode_history`.
-fn encode_submitted_history(
-    at_ms: i64,
-    detail: &[u8],
-) -> Result<Vec<u8>, TransactionalError> {
+fn encode_submitted_history(at_ms: i64, detail: &[u8]) -> Result<Vec<u8>, TransactionalError> {
     let mut out = Vec::new();
     out.push(JOB_VERSION);
     out.extend_from_slice(&0u64.to_le_bytes()); // sequence
