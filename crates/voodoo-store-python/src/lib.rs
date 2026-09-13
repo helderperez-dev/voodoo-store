@@ -2,10 +2,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use pyo3::create_exception;
-use pyo3::exceptions::{PyException, PyRuntimeError};
+use pyo3::exceptions::{PyException, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyModule};
-use voodoo_store_core::{EngineError, Store};
+use voodoo_store_core::{Durability, EngineError, Store, StoreOptions, VerificationReport};
 
 create_exception!(_native, VoodooStoreError, PyException);
 create_exception!(_native, StoreClosedError, VoodooStoreError);
@@ -23,6 +23,62 @@ enum StoreSlot {
     Closed,
 }
 
+#[pyclass(name = "VerificationReport", frozen)]
+#[derive(Clone)]
+struct PyVerificationReport {
+    #[pyo3(get)]
+    file_bytes: u64,
+    #[pyo3(get)]
+    valid_bytes: u64,
+    #[pyo3(get)]
+    records: u64,
+    #[pyo3(get)]
+    committed_transactions: u64,
+    #[pyo3(get)]
+    pending_transactions: u64,
+    #[pyo3(get)]
+    keys: usize,
+    #[pyo3(get)]
+    has_torn_tail: bool,
+    store_id: [u8; 16],
+}
+
+#[pymethods]
+impl PyVerificationReport {
+    #[getter]
+    fn store_id(&self, py: Python<'_>) -> Py<PyBytes> {
+        PyBytes::new(py, &self.store_id).unbind()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "VerificationReport(file_bytes={}, valid_bytes={}, records={}, committed_transactions={}, pending_transactions={}, keys={}, has_torn_tail={})",
+            self.file_bytes,
+            self.valid_bytes,
+            self.records,
+            self.committed_transactions,
+            self.pending_transactions,
+            self.keys,
+            self.has_torn_tail,
+        )
+    }
+}
+
+impl From<VerificationReport> for PyVerificationReport {
+    fn from(report: VerificationReport) -> Self {
+        Self {
+            file_bytes: report.file_bytes,
+            valid_bytes: report.valid_bytes,
+            records: report.records,
+            committed_transactions: report.committed_transactions,
+            pending_transactions: report.pending_transactions,
+            keys: report.keys,
+            has_torn_tail: report.has_torn_tail(),
+            store_id: report.header.store_id,
+        }
+    }
+}
+
 #[pyclass(name = "Store")]
 struct PyStore {
     slot: Arc<Mutex<StoreSlot>>,
@@ -31,11 +87,23 @@ struct PyStore {
 #[pymethods]
 impl PyStore {
     #[staticmethod]
-    fn open(path: PathBuf) -> PyResult<Self> {
-        let store = Store::open(path).map_err(map_engine_error)?;
+    #[pyo3(signature = (path, *, durability = "data", repair_torn_tail = true))]
+    fn open(path: PathBuf, durability: &str, repair_torn_tail: bool) -> PyResult<Self> {
+        let options = StoreOptions {
+            durability: parse_durability(durability)?,
+            repair_torn_tail,
+        };
+        let store = Store::open_with_options(path, options).map_err(map_engine_error)?;
         Ok(Self {
             slot: Arc::new(Mutex::new(StoreSlot::Open(store))),
         })
+    }
+
+    #[staticmethod]
+    fn verify(path: PathBuf) -> PyResult<PyVerificationReport> {
+        Store::verify(path)
+            .map(PyVerificationReport::from)
+            .map_err(map_engine_error)
     }
 
     fn close(&self) -> PyResult<()> {
@@ -260,6 +328,17 @@ impl Drop for PyTransaction {
     }
 }
 
+fn parse_durability(value: &str) -> PyResult<Durability> {
+    match value {
+        "strict" => Ok(Durability::Strict),
+        "data" => Ok(Durability::Data),
+        "relaxed" => Ok(Durability::Relaxed),
+        _ => Err(PyValueError::new_err(
+            "durability must be one of: 'strict', 'data', 'relaxed'",
+        )),
+    }
+}
+
 fn lock_slot(slot: &Arc<Mutex<StoreSlot>>) -> PyResult<MutexGuard<'_, StoreSlot>> {
     slot.lock()
         .map_err(|_| PyRuntimeError::new_err("Voodoo Store binding lock was poisoned"))
@@ -313,6 +392,7 @@ fn map_engine_error(error: EngineError) -> PyErr {
 fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyStore>()?;
     module.add_class::<PyTransaction>()?;
+    module.add_class::<PyVerificationReport>()?;
     module.add(
         "VoodooStoreError",
         module.py().get_type::<VoodooStoreError>(),
