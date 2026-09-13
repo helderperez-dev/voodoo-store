@@ -24,7 +24,6 @@ enum StoreSlot {
 }
 
 #[pyclass(name = "VerificationReport", frozen)]
-#[derive(Clone)]
 struct PyVerificationReport {
     #[pyo3(get)]
     file_bytes: u64,
