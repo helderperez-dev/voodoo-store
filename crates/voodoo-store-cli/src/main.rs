@@ -51,10 +51,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             println!("user_keys={}", report.storage.user_keys);
             println!("internal_keys={}", report.storage.internal_keys);
             println!("live_bytes={}", report.storage.live_bytes());
-            println!(
-                "amplification={:.3}",
-                report.storage.amplification_ratio()
-            );
+            println!("amplification={:.3}", report.storage.amplification_ratio());
             for namespace in report.namespaces {
                 println!(
                     "namespace.{}.keys={} namespace.{}.value_bytes={}",
@@ -568,9 +565,7 @@ fn queue_ack(args: &[String]) -> Result<(), Box<dyn Error>> {
     let id: u64 = args[4].parse()?;
     let lease_generation: u32 = args[5].parse()?;
     let mut store = Store::open(&args[2])?;
-    store
-        .queue(args[3].as_bytes())?
-        .ack(id, lease_generation)?;
+    store.queue(args[3].as_bytes())?.ack(id, lease_generation)?;
     println!("ok");
     Ok(())
 }
