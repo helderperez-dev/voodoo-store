@@ -76,9 +76,7 @@ impl Store {
     /// Returns TTL metadata when present.
     pub fn ttl(&self, key: impl AsRef<[u8]>) -> Result<Option<TtlInfo>, TtlError> {
         let metadata_key = ttl_key(key.as_ref())?;
-        self.get(metadata_key)
-            .map(decode_ttl)
-            .transpose()
+        self.get(metadata_key).map(decode_ttl).transpose()
     }
 
     /// Removes TTL metadata without changing the current value.
@@ -117,7 +115,8 @@ impl Store {
             let ttl = decode_ttl(&metadata_value)?;
             if ttl.is_expired(now_ms) {
                 let user_key = decode_ttl_key(&metadata_key)?;
-                expired_entries.push((metadata_key, user_key));
+                let exists = self.get(&user_key).is_some();
+                expired_entries.push((metadata_key, user_key, exists));
                 if expired_entries.len() == limit {
                     break;
                 }
@@ -133,12 +132,11 @@ impl Store {
             });
         }
 
+        let removed = expired_entries.iter().filter(|(_, _, exists)| *exists).count();
         let mut tx = self.begin()?;
-        let mut removed = 0usize;
-        for (metadata_key, user_key) in expired_entries {
-            if tx.store_get(&user_key).is_some() {
+        for (metadata_key, user_key, exists) in expired_entries {
+            if exists {
                 tx.delete(&user_key)?;
-                removed += 1;
             }
             tx.delete_internal(metadata_key)?;
         }
@@ -223,7 +221,10 @@ mod tests {
         {
             let mut store = Store::open(&path).unwrap();
             store.put_with_ttl(b"session", b"active", 1_000).unwrap();
-            assert_eq!(store.get_at(b"session", 999).unwrap(), Some(b"active".as_slice()));
+            assert_eq!(
+                store.get_at(b"session", 999).unwrap(),
+                Some(b"active".as_slice())
+            );
             assert_eq!(store.get_at(b"session", 1_000).unwrap(), None);
         }
         {
@@ -241,7 +242,10 @@ mod tests {
         store.put_with_ttl(b"token", b"abc", 10).unwrap();
         assert!(store.clear_ttl(b"token").unwrap());
         assert!(!store.clear_ttl(b"token").unwrap());
-        assert_eq!(store.get_at(b"token", 999).unwrap(), Some(b"abc".as_slice()));
+        assert_eq!(
+            store.get_at(b"token", 999).unwrap(),
+            Some(b"abc".as_slice())
+        );
         drop(store);
         let _ = fs::remove_file(path);
     }
