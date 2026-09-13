@@ -53,7 +53,7 @@ impl Store {
             if !entries.is_empty() {
                 let mut tx = compacted.begin()?;
                 for (key, value) in entries {
-                    tx.put(key, value)?;
+                    tx.put_internal(key, value)?;
                 }
                 tx.commit()?;
             }
@@ -141,6 +141,31 @@ mod tests {
         }
         assert_eq!(fs::read(&destination).unwrap(), b"do-not-touch");
         drop(store);
+
+        let _ = fs::remove_file(source);
+        let _ = fs::remove_file(destination);
+    }
+
+    #[test]
+    fn compact_copy_preserves_queue_internal_state() {
+        let source = temp_store_path("compact-queue-source");
+        let destination = temp_store_path("compact-queue-destination");
+
+        {
+            let mut store = Store::open(&source).unwrap();
+            let mut queue = store.queue(b"emails").unwrap();
+            queue.push(b"hello").unwrap();
+            drop(queue);
+            store.compact_copy_to(&destination).unwrap();
+        }
+
+        let mut compacted = Store::open(&destination).unwrap();
+        let mut queue = compacted.queue(b"emails").unwrap();
+        let message = queue.claim(0, 1_000).unwrap().unwrap();
+        assert_eq!(message.payload, b"hello");
+        queue.ack(message.id, message.lease_generation).unwrap();
+        drop(queue);
+        drop(compacted);
 
         let _ = fs::remove_file(source);
         let _ = fs::remove_file(destination);
