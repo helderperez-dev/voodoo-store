@@ -385,7 +385,7 @@ fn open_writers() -> &'static Mutex<HashSet<PathBuf>> {
 fn load_or_initialize_header(file: &mut File) -> Result<StoreHeader, EngineError> {
     let len = file.metadata()?.len();
     if len == 0 {
-        let header = StoreHeader::new(generate_store_id(), unix_time_ms()?);
+        let header = StoreHeader::new(generate_store_id()?, unix_time_ms()?);
         file.seek(SeekFrom::Start(0))?;
         file.write_all(&header.encode())?;
         file.sync_all()?;
@@ -532,13 +532,10 @@ fn unix_time_ms() -> Result<i64, EngineError> {
     i64::try_from(duration.as_millis()).map_err(|_| EngineError::TimestampOverflow)
 }
 
-fn generate_store_id() -> [u8; 16] {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|value| value.as_nanos())
-        .unwrap_or_default();
-    let pid = u128::from(std::process::id());
-    (now ^ (pid << 64)).to_le_bytes()
+fn generate_store_id() -> Result<[u8; 16], EngineError> {
+    let mut store_id = [0u8; 16];
+    getrandom::fill(&mut store_id).map_err(|error| EngineError::Randomness(error.to_string()))?;
+    Ok(store_id)
 }
 
 fn apply_operations(state: &mut HashMap<Vec<u8>, Vec<u8>>, operations: &[Operation]) {
@@ -613,6 +610,8 @@ pub enum EngineError {
     KeyTooLarge,
     #[error("keys beginning with the Voodoo Store internal namespace are reserved")]
     ReservedKey,
+    #[error("failed to obtain OS randomness for store identity: {0}")]
+    Randomness(String),
     #[error("invalid operation payload")]
     InvalidOperationPayload,
     #[error("transaction is already finished")]
@@ -652,6 +651,19 @@ mod tests {
         let second_id = Store::open(&path).unwrap().header().store_id;
         assert_eq!(first_id, second_id);
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn new_stores_receive_distinct_nonzero_identities() {
+        let first = temp_store_path("identity-a");
+        let second = temp_store_path("identity-b");
+        let first_id = Store::open(&first).unwrap().header().store_id;
+        let second_id = Store::open(&second).unwrap().header().store_id;
+        assert_ne!(first_id, [0; 16]);
+        assert_ne!(second_id, [0; 16]);
+        assert_ne!(first_id, second_id);
+        let _ = fs::remove_file(first);
+        let _ = fs::remove_file(second);
     }
 
     #[test]
