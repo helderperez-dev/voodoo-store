@@ -44,7 +44,8 @@ impl LogRecord {
     }
 
     pub fn encode(&self) -> Result<Vec<u8>, StoreError> {
-        let payload_len = u32::try_from(self.payload.len()).map_err(|_| StoreError::PayloadTooLarge)?;
+        let payload_len =
+            u32::try_from(self.payload.len()).map_err(|_| StoreError::PayloadTooLarge)?;
 
         let mut out = Vec::with_capacity(HEADER_LEN + self.payload.len() + 4);
         out.extend_from_slice(&MAGIC);
@@ -71,7 +72,8 @@ impl LogRecord {
         let kind = RecordKind::try_from(bytes[4])?;
         let tx_id = u64::from_le_bytes(bytes[5..13].try_into().expect("fixed header slice"));
         let sequence = u64::from_le_bytes(bytes[13..21].try_into().expect("fixed header slice"));
-        let payload_len = u32::from_le_bytes(bytes[21..25].try_into().expect("fixed header slice")) as usize;
+        let payload_len =
+            u32::from_le_bytes(bytes[21..25].try_into().expect("fixed header slice")) as usize;
         let expected_len = HEADER_LEN
             .checked_add(payload_len)
             .and_then(|len| len.checked_add(4))
@@ -112,7 +114,8 @@ pub(crate) fn encoded_record_len_from_prefix(bytes: &[u8]) -> Result<usize, Stor
     if bytes[0..4] != MAGIC {
         return Err(StoreError::InvalidMagic);
     }
-    let payload_len = u32::from_le_bytes(bytes[21..25].try_into().expect("fixed header slice")) as usize;
+    let payload_len =
+        u32::from_le_bytes(bytes[21..25].try_into().expect("fixed header slice")) as usize;
     HEADER_LEN
         .checked_add(payload_len)
         .and_then(|len| len.checked_add(4))
@@ -169,6 +172,9 @@ mod tests {
         let mut encoded = record.encode().unwrap();
         encoded.pop();
 
-        assert_eq!(LogRecord::decode(&encoded), Err(StoreError::TruncatedRecord));
+        assert_eq!(
+            LogRecord::decode(&encoded),
+            Err(StoreError::TruncatedRecord)
+        );
     }
 }
