@@ -11,6 +11,7 @@ Implemented today:
 - [x] versioned `.vstore` header and persistent store identity
 - [x] checksummed append-only log
 - [x] atomic transactions and deterministic recovery
+- [x] transactional staged reads and staged prefix scans
 - [x] torn-tail detection and repair
 - [x] single-writer locking across Linux/macOS/Windows
 - [x] explicit durability modes
@@ -18,23 +19,32 @@ Implemented today:
 - [x] protected engine-internal mutation namespace
 - [x] compare-and-swap, signed counters and TTL
 - [x] verify, backup, restore-copy, compact-copy and logical snapshot primitives
+- [x] identity-preserving physical checkpoints
+- [x] identity-preserving compact generations with transaction/sequence high-water continuity
+- [x] recoverable offline generation activation with stale-generation rejection and retained rollback backup
 - [x] collections with schema-version/codec metadata and secondary/unique indexes
+- [x] exact and byte-range secondary-index queries with ordering and limits
 - [x] durable queues, jobs, one-shot/interval schedules and cron schedules
 - [x] durable triggers routing into Jobs
+- [x] fully transactional trigger fire + Job + trigger metadata update
 - [x] topics, streams, durable subscriptions, replay and consumer groups
 - [x] durable request/reply correlation and RPC state
 - [x] transactional Outbox events
+- [x] automatic committed-transaction CDC/change feed
 - [x] content-addressed object storage with deduplication, verification and orphan GC
 - [x] durable workflow state with signals, timers, waits and history
+- [x] workflow mutations integrated with the shared transaction surface
 - [x] storage/namespace health accounting
-- [x] typed cross-domain transaction primitives for application KV + Job + Outbox Event + RPC Request
+- [x] typed cross-domain transactions spanning application KV, Collections, Jobs, Queues, Streams/Topics, Objects, Outbox, RPC and Workflows
+- [x] transaction-aware Job idempotency, including prior staged jobs
 - [x] standalone CLI
 - [x] C ABI v2 foundation with transactions, errors and panic containment
 - [x] deterministic torn-write, corruption and process-crash tests
+- [x] deterministic transactional state-model stress test with repeated reopen/recovery
 - [x] Format + Clippy + Linux/macOS/Windows + Rust 1.85 CI baseline
 - [x] executable application-state example and adoption quickstart
 
-The remaining work moves this usable single-node development release toward a hardened 1.0 and later distributed operation.
+The next integration milestone is intentionally **Python binding + Voodoo adapter**. Core work continues only where it protects format stability, durability, or the API surface that the binding will expose.
 
 ## M0 — Durable log and recovery
 
@@ -50,6 +60,7 @@ Goal: establish the byte-level source of truth.
 - [x] corruption surfaced rather than silently accepted in the durable prefix
 - [x] deterministic torn-write and process-crash harness
 - [x] deterministic byte-mutation/truncation sweeps
+- [x] deterministic transactional state-model stress test
 - [x] MSRV 1.85 CI
 - [x] Linux/macOS/Windows CI
 - [ ] continuous fuzzing of decoder/recovery scanner
@@ -62,6 +73,7 @@ Goal: make the durable core efficient and operationally safe.
 - [x] canonical byte-oriented KV format
 - [x] in-memory index rebuilt from log
 - [x] prefix scans
+- [x] transaction-local staged reads / prefix scans
 - [x] protected user/internal namespaces
 - [x] CAS and signed counters
 - [x] TTL semantics and expiration purge
@@ -70,10 +82,13 @@ Goal: make the durable core efficient and operationally safe.
 - [x] verified compact-copy
 - [x] logical create-only snapshots
 - [x] storage accounting and amplification reporting
-- [ ] identity-preserving checkpoints
-- [ ] log generations
-- [ ] atomic in-place cross-platform generation replacement / compaction
-- [ ] repair tooling beyond torn-tail repair
+- [x] identity-preserving physical checkpoints
+- [x] compact log generations retaining Store ID
+- [x] high-water marker preventing transaction/sequence reuse after generation activation
+- [x] offline generation activation with stale-generation detection
+- [x] recovery helper for interrupted two-rename activation
+- [ ] directory-fsync/power-loss proof for generation activation on every supported filesystem
+- [ ] repair tooling beyond torn-tail and generation-activation recovery
 - [ ] quotas / per-namespace limits
 - [ ] benchmark harness and performance budgets
 
@@ -87,14 +102,19 @@ Goal: structured application data without making SQL the internal architecture.
 - [x] primary keys
 - [x] secondary indexes
 - [x] unique indexes
+- [x] unique-index enforcement across staged writes in the same transaction
 - [x] exact secondary-index lookup
-- [ ] migration/evolution tooling
-- [ ] iterators and range scans
-- [ ] composite indexes
+- [x] byte-range secondary-index query
+- [x] inclusive/exclusive bounds
+- [x] deterministic ascending/descending ordering and limits
+- [x] transactional record/index mutation surface
+- [x] committed change-set metadata / CDC integration
+- [ ] migration/evolution tooling beyond version compare-and-swap
+- [ ] physical ordered-index range seek (current baseline decodes/sorts logical index entries)
+- [ ] composite-index encoding helpers
 - [ ] query expressions and projections
 - [ ] query planner baseline
 - [ ] full-text index prototype
-- [ ] committed change-set metadata / CDC integration
 
 ## M3 — Jobs, queues, time and triggers
 
@@ -109,12 +129,14 @@ Queues:
 - [x] durable retry and dead state
 - [x] stale-ACK rejection
 - [x] queue statistics and dead-message purge
+- [x] queue enqueue in shared cross-domain transactions
 
 Jobs and time:
 
 - [x] dedicated durable Jobs abstraction
 - [x] 128-bit job identifiers
 - [x] job idempotency keys
+- [x] transaction-aware idempotency lookup across committed and staged Jobs
 - [x] attempts, retry/backoff, leases and deadlines
 - [x] durable execution history
 - [x] one-shot schedules
@@ -125,9 +147,9 @@ Jobs and time:
 - [x] atomic job state + history transitions
 - [x] atomic one-shot/interval schedule fire + schedule advance
 - [x] application KV + Job enqueue in one transaction
-- [ ] remove duplicate Job wire encoding from transactional helper by centralizing internal codec
-- [ ] extend cross-domain transactions to Queue / Stream / Topic / Object references
-- [ ] trigger firing fully transactional with trigger metadata update
+- [x] cross-domain transaction operations for Queue / Stream / Topic / Objects
+- [x] trigger firing fully transactional with trigger metadata update
+- [ ] centralize the v1 Job wire codec currently shared by Jobs and transactional helper
 - [ ] richer retry policies and jitter
 - [ ] timezone-aware cron as an optional layer (core remains deterministic UTC)
 
@@ -148,10 +170,11 @@ Goal: support decoupled communication, replay and live state.
 - [x] durable request/reply implementation
 - [x] RPC correlation helpers and durable deadlines
 - [x] transactional Outbox events with explicit ACK
-- [ ] change data capture from committed transactions
-- [ ] change feeds
+- [x] automatic CDC from committed transactions
+- [x] ordered change feed by transaction and mutation sequence
+- [x] CDC pruning without recursive maintenance events
 - [ ] live-query invalidation/deltas
-- [ ] watcher/subscription API
+- [ ] watcher/subscription convenience API above the durable feed
 
 ## M5 — Objects
 
@@ -163,10 +186,10 @@ Goal: embedded object/blob storage with transaction-aware references.
 - [x] integrity verification
 - [x] object references
 - [x] orphan detection / garbage collection
-- [ ] streaming writes/reads
+- [x] object creation/reference primitives in cross-domain transactions
+- [ ] streaming writes/reads (current engine materializes values in memory)
 - [ ] richer object metadata
 - [ ] retention/lifecycle policies
-- [ ] object-reference operations inside public cross-domain transactions
 
 ## M6 — Durable workflow state
 
@@ -180,8 +203,9 @@ Goal: persist orchestration state without turning Store into a code executor.
 - [x] waiting states and resume
 - [x] parent/child correlation
 - [x] restart/reopen semantics
+- [x] workflow creation/step/wait/signal/finalization integrated with shared transactions
+- [x] staged workflow history sequence allocation
 - [ ] compensation metadata/policies
-- [ ] workflow operations integrated with the public cross-domain transaction surface
 
 The workflow executor remains outside Voodoo Store.
 
@@ -197,6 +221,8 @@ Goal: make Store safe to operate as embedded infrastructure.
 - [x] CLI inspection and operation surface
 - [x] CLI verify / backup / restore / compaction / snapshot commands
 - [x] CLI Collections / Queue / Messaging / Objects / Jobs / Scheduler / Cron / Trigger / Workflow operations
+- [x] physical checkpoint and generation APIs in core
+- [x] deterministic state-model stress coverage
 - [ ] encryption-at-rest design and key rotation metadata
 - [ ] namespace capability metadata
 - [ ] transaction/read/write counters and latency metrics
@@ -205,6 +231,30 @@ Goal: make Store safe to operate as embedded infrastructure.
 - [ ] compaction backlog metrics
 - [ ] tracing hooks
 - [ ] quotas
+
+## Pre-Python integration gate
+
+Goal: stop Rust-core churn before exposing the engine as the default state layer of Voodoo.
+
+Required before starting the Python/Voodoo implementation:
+
+- [x] byte-oriented core independent of Python/Voodoo
+- [x] single shared transaction boundary for primary application-state primitives
+- [x] transaction-local staged reads and scans
+- [x] automatic durable CDC/change feed
+- [x] Collections exact/range query baseline
+- [x] durable Jobs/Queues/Messaging/RPC/Objects/Workflow state
+- [x] transactional Trigger -> Job routing
+- [x] physical checkpoint primitive
+- [x] compact identity-preserving generation primitive
+- [x] stale-generation-safe offline activation and recovery helper
+- [x] deterministic cross-platform crash/fault/state-model tests
+- [x] C ABI foundation proving language-neutral engine ownership
+- [ ] centralize duplicate Job v1 codec before freezing the binding-facing job contract
+- [ ] final CI gate after the codec cleanup
+- [ ] write the binding-surface contract / ownership rules
+
+**The Python package and Voodoo Framework adapter start immediately after this gate. They are intentionally not implemented in this milestone.**
 
 ## M7.5 — Voodoo Store Studio
 
@@ -228,7 +278,7 @@ Planned surfaces:
 - [ ] Topics / Streams / Subscriptions / Consumer Groups / RPC / Outbox
 - [ ] Objects
 - [ ] Workflows / signals / timers / history
-- [ ] Backup / restore / compaction / snapshots
+- [ ] Backup / restore / compaction / snapshots / generations
 - [ ] Observability
 
 Architecture requirements:
@@ -245,10 +295,12 @@ Architecture requirements:
 Goal: connect correct local stores safely.
 
 - [x] cryptographically strong store identity
+- [x] durable ordered local change feed suitable as a replication source primitive
+- [x] physical identity-preserving checkpoints
 - [ ] replication protocol specification
-- [ ] canonical node identity
-- [ ] logical change shipping / log shipping
-- [ ] replica checkpoints
+- [ ] canonical node identity beyond Store ID
+- [ ] logical change shipping / log shipping protocol
+- [ ] replica checkpoints and catch-up protocol
 - [ ] offline/online synchronization
 - [ ] conflict model
 - [ ] distributed leases
@@ -263,13 +315,13 @@ Goal: connect correct local stores safely.
 - [x] C ABI transactions and `last_error`
 - [x] standalone CLI
 - [ ] complete C ABI coverage for Queue / Collections / Jobs / Streams / Objects / Workflows
-- [ ] Python binding package
+- [ ] Python binding package — **next integration milestone**
+- [ ] Voodoo Framework adapter — **immediately after Python binding**
 - [ ] Node.js binding package
 - [ ] Go binding
 - [ ] Swift binding
 - [ ] Java/.NET compatibility proof
 - [ ] cross-language compatibility fixtures for the same `.vstore`
-- [ ] Voodoo Framework adapter
 - [ ] Voodoo Store Studio
 - [ ] main `voodoo` CLI integration
 
@@ -280,6 +332,7 @@ A normal single-node Voodoo application should be able to use the following with
 - [x] durable KV / application state
 - [x] cache / TTL
 - [x] collections and indexes
+- [x] range-query baseline
 - [x] queues
 - [x] durable jobs
 - [x] delayed / recurring / cron scheduling
@@ -289,9 +342,9 @@ A normal single-node Voodoo application should be able to use the following with
 - [x] object/blob storage baseline
 - [x] durable HITL waiting state
 - [x] workflow persistence
-- [x] operational health / verify / backup / restore / compact-copy / snapshot tooling
-- [ ] full cross-domain transactional surface for all primitives
-- [ ] CDC/live feeds
+- [x] shared cross-domain transaction surface for the primary primitives
+- [x] automatic CDC/change feeds
+- [x] operational health / verify / backup / restore / compact-copy / snapshot / checkpoint / generation tooling
 - [ ] visual administration through Store Studio
 
 External providers remain optional adapters for workloads that outgrow the embedded deployment model.
