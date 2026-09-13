@@ -177,6 +177,43 @@ Goal: make Store safe to operate as embedded infrastructure.
 - [ ] tracing hooks
 - [x] CLI inspection and operation foundation
 
+## M7.5 — Voodoo Store Studio
+
+Goal: provide a first-class local visual administration experience for every major Store primitive.
+
+The Studio is a local web application started by the Store CLI and later exposed through the main Voodoo CLI. It must operate directly against Voodoo Store APIs rather than introducing a second storage model.
+
+Planned command surface:
+
+- [ ] `voodoo-store studio app.vstore`
+- [ ] `voodoo store studio` from a Voodoo project, with automatic store discovery
+- [ ] configurable local port and `--no-open` mode
+- [ ] read-only mode for safe inspection
+- [ ] explicit opt-in for destructive mutations
+
+Planned visual surfaces:
+
+- [ ] Overview: store identity, format version, size, durability mode, health and recovery status
+- [ ] Data: collections/models, KV namespaces, filtering, sorting and record editing
+- [ ] Schema: fields, indexes, migrations and relationships
+- [ ] Queues: depth, ready/leased/dead messages, payload inspection, retry, nack and purge
+- [ ] Jobs: status, attempts, execution history, retry policy and manual re-run
+- [ ] Scheduler: one-shot jobs, recurring schedules and cron timeline
+- [ ] Messaging: topics, subscriptions, streams, offsets and replay
+- [ ] Objects: blob metadata, size, references, integrity and lifecycle state
+- [ ] Workflows: durable instances, current step, waits, timers, signals and history
+- [ ] Operations: verify, backup, restore, compaction, retention and storage accounting
+- [ ] Observability: recent transactions, traces, queue latency, consumer lag and health metrics
+
+Architecture requirements:
+
+- [ ] Studio UI remains a separate consumer of stable Store APIs
+- [ ] no business logic duplicated between CLI and Studio
+- [ ] localhost-only by default
+- [ ] mutation APIs protected by explicit capability boundaries
+- [ ] future remote mode must require authentication and must not weaken the local embedded security model
+- [ ] design system aligned with the broader Voodoo visual language so the same shell can later power Runtime/Builder tooling
+
 ## M8 — Sync, replication and Voodoo Protocol
 
 Goal: connect correct local stores safely.
@@ -207,6 +244,8 @@ These do not change core semantics; they validate portability and make Voodoo St
 - [ ] Swift binding
 - [ ] Java/.NET compatibility proof
 - [ ] cross-language compatibility fixtures for the same `.vstore`
+- [ ] Voodoo Store Studio local web application
+- [ ] main `voodoo` CLI integration for Store Studio and operational commands
 
 ## Zero External Infrastructure milestone
 
@@ -223,6 +262,7 @@ Voodoo + Voodoo Store reaches the product North Star when a normal application c
 - [ ] durable execution and HITL waiting state
 - [ ] workflow persistence
 - [ ] operational inspect/backup/verify/compact tooling
+- [ ] visual local administration through Voodoo Store Studio
 
 External providers can remain optional adapters for workloads that outgrow the embedded deployment model.
 
