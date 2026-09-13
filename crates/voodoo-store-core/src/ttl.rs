@@ -57,11 +57,7 @@ impl Store {
     ///
     /// This method does not mutate storage. Use `purge_expired` to reclaim
     /// expired entries physically.
-    pub fn get_at(
-        &self,
-        key: impl AsRef<[u8]>,
-        now_ms: i64,
-    ) -> Result<Option<&[u8]>, TtlError> {
+    pub fn get_at(&self, key: impl AsRef<[u8]>, now_ms: i64) -> Result<Option<&[u8]>, TtlError> {
         let key = key.as_ref();
         let value = match self.get(key) {
             Some(value) => value,
@@ -93,11 +89,7 @@ impl Store {
     ///
     /// A limit of zero performs no work. Malformed TTL metadata is surfaced as
     /// corruption rather than silently discarded.
-    pub fn purge_expired(
-        &mut self,
-        now_ms: i64,
-        limit: usize,
-    ) -> Result<TtlSweepReport, TtlError> {
+    pub fn purge_expired(&mut self, now_ms: i64, limit: usize) -> Result<TtlSweepReport, TtlError> {
         if limit == 0 {
             return Ok(TtlSweepReport {
                 scanned: 0,
@@ -132,7 +124,10 @@ impl Store {
             });
         }
 
-        let removed = expired_entries.iter().filter(|(_, _, exists)| *exists).count();
+        let removed = expired_entries
+            .iter()
+            .filter(|(_, _, exists)| *exists)
+            .count();
         let mut tx = self.begin()?;
         for (metadata_key, user_key, exists) in expired_entries {
             if exists {
