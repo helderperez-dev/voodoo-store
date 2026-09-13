@@ -215,7 +215,8 @@ fn decode_schedule(bytes: &[u8]) -> Result<DurableCronSchedule, CronSchedulerErr
     if !cursor.finished() {
         return Err(CronSchedulerError::CorruptRecord);
     }
-    let expression_str = std::str::from_utf8(&expression).map_err(|_| CronSchedulerError::InvalidUtf8)?;
+    let expression_str =
+        std::str::from_utf8(&expression).map_err(|_| CronSchedulerError::InvalidUtf8)?;
     CronExpression::parse(expression_str)?;
     validate_job(&job)?;
     Ok(DurableCronSchedule {
@@ -300,7 +301,10 @@ impl<'a> Cursor<'a> {
     }
 
     fn take(&mut self, len: usize) -> Result<&'a [u8], CronSchedulerError> {
-        let end = self.pos.checked_add(len).ok_or(CronSchedulerError::CorruptRecord)?;
+        let end = self
+            .pos
+            .checked_add(len)
+            .ok_or(CronSchedulerError::CorruptRecord)?;
         let value = self
             .bytes
             .get(self.pos..end)
@@ -310,7 +314,10 @@ impl<'a> Cursor<'a> {
     }
 
     fn u8(&mut self) -> Result<u8, CronSchedulerError> {
-        Ok(*self.take(1)?.first().ok_or(CronSchedulerError::CorruptRecord)?)
+        Ok(*self
+            .take(1)?
+            .first()
+            .ok_or(CronSchedulerError::CorruptRecord)?)
     }
 
     fn u32(&mut self) -> Result<u32, CronSchedulerError> {
@@ -393,7 +400,10 @@ mod tests {
         }
         {
             let mut store = Store::open(&path).unwrap();
-            assert_eq!(store.get_cron_schedule(&id).unwrap().unwrap().next_run_ms, 300_000);
+            assert_eq!(
+                store.get_cron_schedule(&id).unwrap().unwrap().next_run_ms,
+                300_000
+            );
             let report = store.tick_cron_schedules(300_000, 10).unwrap();
             assert_eq!(report.fired, 1);
             let schedule = store.get_cron_schedule(&id).unwrap().unwrap();
@@ -410,11 +420,7 @@ mod tests {
         let path = temp_store_path("disabled");
         let mut store = Store::open(&path).unwrap();
         let id = store
-            .create_cron_schedule(
-                "* * * * *",
-                JobSpec::new(b"job".to_vec(), Vec::new()),
-                0,
-            )
+            .create_cron_schedule("* * * * *", JobSpec::new(b"job".to_vec(), Vec::new()), 0)
             .unwrap();
         assert!(store.set_cron_schedule_enabled(&id, false).unwrap());
         assert_eq!(store.tick_cron_schedules(60_000, 10).unwrap().fired, 0);
