@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::PathBuf;
-use std::process::{Command, ExitCode};
+use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use voodoo_store_core::Store;
@@ -97,13 +97,11 @@ fn process_exit_after_commit_preserves_committed_transaction() {
 
     let store = Store::open(&path).unwrap();
     assert_eq!(store.get(b"safe"), Some(b"committed".as_slice()));
-    assert_eq!(store.get(b"crash:after"), Some(b"must-survive".as_slice()));
+    assert_eq!(
+        store.get(b"crash:after"),
+        Some(b"must-survive".as_slice())
+    );
     drop(store);
 
     let _ = fs::remove_file(path);
-}
-
-#[allow(dead_code)]
-fn _exit_code_type_check() -> ExitCode {
-    ExitCode::SUCCESS
 }
