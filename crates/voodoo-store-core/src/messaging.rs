@@ -68,7 +68,9 @@ impl<'a> Stream<'a> {
 
     pub fn append(&mut self, payload: impl AsRef<[u8]>) -> Result<u64, MessagingError> {
         let offset = self.next_offset()?;
-        let next = offset.checked_add(1).ok_or(MessagingError::OffsetExhausted)?;
+        let next = offset
+            .checked_add(1)
+            .ok_or(MessagingError::OffsetExhausted)?;
         let key = self.entry_key(offset);
         let value = encode_entry(payload.as_ref())?;
         let mut tx = self.store.begin()?;
@@ -78,11 +80,7 @@ impl<'a> Stream<'a> {
         Ok(offset)
     }
 
-    pub fn read_from(
-        &self,
-        offset: u64,
-        limit: usize,
-    ) -> Result<Vec<StreamEntry>, MessagingError> {
+    pub fn read_from(&self, offset: u64, limit: usize) -> Result<Vec<StreamEntry>, MessagingError> {
         if limit == 0 {
             return Ok(Vec::new());
         }
@@ -113,7 +111,9 @@ impl<'a> Stream<'a> {
         match self.store.get(&self.next_key) {
             None => Ok(0),
             Some(bytes) => {
-                let encoded: [u8; 8] = bytes.try_into().map_err(|_| MessagingError::CorruptMetadata)?;
+                let encoded: [u8; 8] = bytes
+                    .try_into()
+                    .map_err(|_| MessagingError::CorruptMetadata)?;
                 Ok(u64::from_le_bytes(encoded))
             }
         }
@@ -135,11 +135,7 @@ impl Topic<'_> {
         self.stream.append(payload)
     }
 
-    pub fn read_from(
-        &self,
-        offset: u64,
-        limit: usize,
-    ) -> Result<Vec<StreamEntry>, MessagingError> {
+    pub fn read_from(&self, offset: u64, limit: usize) -> Result<Vec<StreamEntry>, MessagingError> {
         self.stream.read_from(offset, limit)
     }
 
@@ -151,7 +147,9 @@ impl Topic<'_> {
         match self.stream.store.get(key) {
             None => Ok(SubscriptionState { next_offset: 0 }),
             Some(bytes) => {
-                let encoded: [u8; 8] = bytes.try_into().map_err(|_| MessagingError::CorruptMetadata)?;
+                let encoded: [u8; 8] = bytes
+                    .try_into()
+                    .map_err(|_| MessagingError::CorruptMetadata)?;
                 Ok(SubscriptionState {
                     next_offset: u64::from_le_bytes(encoded),
                 })
@@ -177,7 +175,9 @@ impl Topic<'_> {
         let subscription = subscription.as_ref();
         validate_name(subscription)?;
         let current = self.subscription_state(subscription)?;
-        let next_offset = offset.checked_add(1).ok_or(MessagingError::OffsetExhausted)?;
+        let next_offset = offset
+            .checked_add(1)
+            .ok_or(MessagingError::OffsetExhausted)?;
         if next_offset < current.next_offset {
             return Err(MessagingError::CursorRegression {
                 current: current.next_offset,
@@ -185,7 +185,9 @@ impl Topic<'_> {
             });
         }
         let key = subscription_key(self.name(), subscription)?;
-        self.stream.store.put_internal(key, next_offset.to_le_bytes())?;
+        self.stream
+            .store
+            .put_internal(key, next_offset.to_le_bytes())?;
         Ok(SubscriptionState { next_offset })
     }
 
@@ -199,7 +201,9 @@ impl Topic<'_> {
         let subscription = subscription.as_ref();
         validate_name(subscription)?;
         let key = subscription_key(self.name(), subscription)?;
-        self.stream.store.put_internal(key, next_offset.to_le_bytes())?;
+        self.stream
+            .store
+            .put_internal(key, next_offset.to_le_bytes())?;
         Ok(())
     }
 }
@@ -244,7 +248,9 @@ fn decode_entry_offset(prefix: &[u8], key: &[u8]) -> Result<u64, MessagingError>
         return Err(MessagingError::CorruptMetadata);
     }
     Ok(u64::from_be_bytes(
-        key[prefix.len()..].try_into().expect("8-byte stream offset"),
+        key[prefix.len()..]
+            .try_into()
+            .expect("8-byte stream offset"),
     ))
 }
 
@@ -324,7 +330,9 @@ mod tests {
             topic.publish(b"two").unwrap();
             let entries = topic.poll(b"billing", 10).unwrap();
             assert_eq!(entries.len(), 2);
-            topic.acknowledge_through(b"billing", entries[0].offset).unwrap();
+            topic
+                .acknowledge_through(b"billing", entries[0].offset)
+                .unwrap();
             let remaining = topic.poll(b"billing", 10).unwrap();
             assert_eq!(remaining.len(), 1);
             assert_eq!(remaining[0].payload, b"two");
