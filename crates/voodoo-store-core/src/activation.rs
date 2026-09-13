@@ -159,7 +159,11 @@ pub fn recover_generation_activation(
     }
 }
 
-fn verify_activated(active: &Path, backup: &Path, store_id: [u8; 16]) -> Result<(), ActivationError> {
+fn verify_activated(
+    active: &Path,
+    backup: &Path,
+    store_id: [u8; 16],
+) -> Result<(), ActivationError> {
     let active_report = Store::verify(active)?;
     let backup_report = Store::verify(backup)?;
     if active_report.has_torn_tail() || backup_report.has_torn_tail() {
@@ -183,7 +187,11 @@ fn rollback_activation(active: &Path, generation: &Path, backup: &Path) -> Resul
     Ok(())
 }
 
-fn validate_distinct_paths(active: &Path, generation: &Path, backup: &Path) -> Result<(), ActivationError> {
+fn validate_distinct_paths(
+    active: &Path,
+    generation: &Path,
+    backup: &Path,
+) -> Result<(), ActivationError> {
     if active == generation || active == backup || generation == backup {
         return Err(ActivationError::PathsMustDiffer);
     }
@@ -263,14 +271,22 @@ pub enum ActivationError {
     MissingGenerationMarker,
     #[error("generation marker is not the physical high-water record")]
     InvalidGenerationMarker,
-    #[error("generation is stale: active tx high-water is {active_tx_id}, marker tx is {marker_tx_id}")]
-    StaleGeneration { active_tx_id: u64, marker_tx_id: u64 },
+    #[error(
+        "generation is stale: active tx high-water is {active_tx_id}, marker tx is {marker_tx_id}"
+    )]
+    StaleGeneration {
+        active_tx_id: u64,
+        marker_tx_id: u64,
+    },
     #[error("activation/recovery file layout is ambiguous")]
     AmbiguousLayout,
     #[error("activation counter exhausted")]
     CounterExhausted,
     #[error("activation failed ({activation}) and rollback also failed ({rollback})")]
-    RollbackFailed { activation: String, rollback: String },
+    RollbackFailed {
+        activation: String,
+        rollback: String,
+    },
 }
 
 #[cfg(test)]
