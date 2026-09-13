@@ -10,6 +10,8 @@ use thiserror::Error;
 use crate::header::{HeaderError, STORE_HEADER_LEN, StoreHeader};
 use crate::log::{HEADER_LEN, LogRecord, RecordKind, StoreError, encoded_record_len_from_prefix};
 
+pub(crate) const INTERNAL_KEY_PREFIX: &[u8] = b"\xffvds:";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Durability {
     Strict,
@@ -182,6 +184,25 @@ impl Store {
         tx.commit()
     }
 
+    pub(crate) fn put_internal(
+        &mut self,
+        key: impl AsRef<[u8]>,
+        value: impl AsRef<[u8]>,
+    ) -> Result<(), EngineError> {
+        let mut tx = self.begin()?;
+        tx.put_internal(key, value)?;
+        tx.commit()
+    }
+
+    pub(crate) fn delete_internal(
+        &mut self,
+        key: impl AsRef<[u8]>,
+    ) -> Result<(), EngineError> {
+        let mut tx = self.begin()?;
+        tx.delete_internal(key)?;
+        tx.commit()
+    }
+
     pub fn flush(&self) -> Result<(), EngineError> {
         sync_file(&self.file, self.options.durability)
     }
@@ -246,6 +267,16 @@ impl Transaction<'_> {
         key: impl AsRef<[u8]>,
         value: impl AsRef<[u8]>,
     ) -> Result<(), EngineError> {
+        let key = key.as_ref();
+        ensure_user_key(key)?;
+        self.put_internal(key, value)
+    }
+
+    pub(crate) fn put_internal(
+        &mut self,
+        key: impl AsRef<[u8]>,
+        value: impl AsRef<[u8]>,
+    ) -> Result<(), EngineError> {
         self.ensure_open()?;
         let key = key.as_ref().to_vec();
         let value = value.as_ref().to_vec();
@@ -256,6 +287,15 @@ impl Transaction<'_> {
     }
 
     pub fn delete(&mut self, key: impl AsRef<[u8]>) -> Result<(), EngineError> {
+        let key = key.as_ref();
+        ensure_user_key(key)?;
+        self.delete_internal(key)
+    }
+
+    pub(crate) fn delete_internal(
+        &mut self,
+        key: impl AsRef<[u8]>,
+    ) -> Result<(), EngineError> {
         self.ensure_open()?;
         let key = key.as_ref().to_vec();
         self.store
@@ -414,6 +454,14 @@ fn next_counter(max: u64) -> Result<u64, EngineError> {
     }
 }
 
+fn ensure_user_key(key: &[u8]) -> Result<(), EngineError> {
+    if key.starts_with(INTERNAL_KEY_PREFIX) {
+        Err(EngineError::ReservedKey)
+    } else {
+        Ok(())
+    }
+}
+
 fn unix_time_ms() -> Result<i64, EngineError> {
     let duration = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -500,6 +548,8 @@ pub enum EngineError {
     AlreadyOpen,
     #[error("key is too large")]
     KeyTooLarge,
+    #[error("keys beginning with the Voodoo Store internal namespace are reserved")]
+    ReservedKey,
     #[error("invalid operation payload")]
     InvalidOperationPayload,
     #[error("transaction is already finished")]
@@ -562,6 +612,33 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0], (b"user:1".to_vec(), b"A".to_vec()));
         assert_eq!(entries[1], (b"user:2".to_vec(), b"B".to_vec()));
+        drop(store);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn public_mutations_reject_internal_namespace() {
+        let path = temp_store_path("reserved-namespace");
+        let mut store = Store::open(&path).unwrap();
+        let reserved = b"\xffvds:test";
+
+        assert!(matches!(
+            store.put(reserved, b"value"),
+            Err(EngineError::ReservedKey)
+        ));
+        assert!(matches!(
+            store.delete(reserved),
+            Err(EngineError::ReservedKey)
+        ));
+
+        let mut tx = store.begin().unwrap();
+        assert!(matches!(
+            tx.put(reserved, b"value"),
+            Err(EngineError::ReservedKey)
+        ));
+        tx.rollback().unwrap();
+        assert_eq!(store.get(reserved), None);
+
         drop(store);
         let _ = fs::remove_file(path);
     }
