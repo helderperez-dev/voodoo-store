@@ -6,10 +6,12 @@
 //! semantics remain portable and independently usable.
 
 pub mod engine;
+pub mod header;
 pub mod log;
 pub mod model;
 
 pub use engine::{EngineError, Store, Transaction};
+pub use header::{HeaderError, StoreHeader, FORMAT_MAJOR, FORMAT_MINOR, STORE_HEADER_LEN};
 pub use log::{LogRecord, RecordKind, StoreError};
 pub use model::{
     DeliverySemantics, DestinationKind, JobState, MessageEnvelope, ScheduleKind, TraceContext,
