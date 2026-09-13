@@ -365,7 +365,9 @@ fn recover(file: &mut File) -> Result<Recovery, EngineError> {
 
         max_sequence = record.sequence;
         max_tx_id = max_tx_id.max(record.tx_id);
-        records = records.checked_add(1).ok_or(EngineError::CounterExhausted)?;
+        records = records
+            .checked_add(1)
+            .ok_or(EngineError::CounterExhausted)?;
 
         match record.kind {
             RecordKind::Put => pending
