@@ -6,9 +6,7 @@
 
 use thiserror::Error;
 
-use crate::{
-    EngineError, JobError, JobId, JobSpec, Store, Transaction, TransactionalError,
-};
+use crate::{EngineError, JobError, JobId, JobSpec, Store, Transaction, TransactionalError};
 
 const TRIGGER_PREFIX: &[u8] = b"\xffvds:trigger:data:";
 const VERSION: u8 = 1;
