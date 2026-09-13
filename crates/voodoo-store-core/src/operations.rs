@@ -95,6 +95,7 @@ impl Store {
             ("schedules", b"\xffvds:schedule:".as_slice()),
             ("cron", b"\xffvds:cron:".as_slice()),
             ("triggers", b"\xffvds:trigger:".as_slice()),
+            ("outbox", b"\xffvds:outbox:".as_slice()),
             ("streams", b"\xffvds:stream:".as_slice()),
             ("subscriptions", b"\xffvds:sub:".as_slice()),
             ("objects", b"\xffvds:obj:".as_slice()),
@@ -197,6 +198,7 @@ mod tests {
                 .iter()
                 .any(|entry| entry.name == "triggers")
         );
+        assert!(report.namespaces.iter().any(|entry| entry.name == "outbox"));
         drop(store);
         let _ = fs::remove_file(path);
     }
