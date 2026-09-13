@@ -24,7 +24,11 @@ impl StorageStats {
     pub fn amplification_ratio(self) -> f64 {
         let live = self.live_bytes();
         if live == 0 {
-            if self.file_bytes == 0 { 1.0 } else { self.file_bytes as f64 }
+            if self.file_bytes == 0 {
+                1.0
+            } else {
+                self.file_bytes as f64
+            }
         } else {
             self.file_bytes as f64 / live as f64
         }
@@ -172,8 +176,18 @@ mod tests {
         }
         let report = store.health_report().unwrap();
         assert_eq!(report.store_id, store.header().store_id);
-        assert!(report.namespaces.iter().any(|entry| entry.name == "ttl" && entry.keys > 0));
-        assert!(report.namespaces.iter().any(|entry| entry.name == "queues" && entry.keys > 0));
+        assert!(
+            report
+                .namespaces
+                .iter()
+                .any(|entry| entry.name == "ttl" && entry.keys > 0)
+        );
+        assert!(
+            report
+                .namespaces
+                .iter()
+                .any(|entry| entry.name == "queues" && entry.keys > 0)
+        );
         drop(store);
         let _ = fs::remove_file(path);
     }
