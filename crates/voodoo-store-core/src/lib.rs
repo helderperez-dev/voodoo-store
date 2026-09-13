@@ -9,6 +9,7 @@ pub mod engine;
 pub mod header;
 pub mod log;
 pub mod model;
+pub mod queue;
 
 pub use engine::{
     Durability, EngineError, Store, StoreOptions, Transaction, VerificationReport,
@@ -18,3 +19,4 @@ pub use log::{LogRecord, RecordKind, StoreError};
 pub use model::{
     DeliverySemantics, DestinationKind, JobState, MessageEnvelope, ScheduleKind, TraceContext,
 };
+pub use queue::{PushOptions, Queue, QueueError, QueueMessage, QueueState, QueueStats};
