@@ -96,7 +96,9 @@ impl CronExpression {
                 .checked_add(minute_ms)
                 .ok_or(CronError::TimeOverflow)?;
         }
-        Err(CronError::InvalidField("no matching time within search horizon".into()))
+        Err(CronError::InvalidField(
+            "no matching time within search horizon".into(),
+        ))
     }
 }
 
@@ -120,7 +122,10 @@ impl Field {
             let (start, end) = if base == "*" {
                 (min, max)
             } else if let Some((start, end)) = base.split_once('-') {
-                (parse_value(start, min, max, input)?, parse_value(end, min, max, input)?)
+                (
+                    parse_value(start, min, max, input)?,
+                    parse_value(end, min, max, input)?,
+                )
             } else {
                 let value = parse_value(base, min, max, input)?;
                 (value, value)
