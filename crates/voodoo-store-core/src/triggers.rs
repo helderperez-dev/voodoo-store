@@ -1,13 +1,12 @@
 //! Durable trigger metadata and trigger-to-job routing.
 //!
 //! Triggers describe *when* durable work should be enqueued. Voodoo Store
-//! persists definitions and atomically creates jobs when a trigger is fired,
-//! but never executes application code or evaluates application-specific
-//! predicates.
+//! persists definitions and routes fires into durable jobs, but never executes
+//! application code or evaluates application-specific predicates.
 
 use thiserror::Error;
 
-use crate::{EngineError, JobError, JobHistoryEntry, JobHistoryKind, JobId, JobSpec, Store};
+use crate::{EngineError, JobError, JobId, JobSpec, Store};
 
 const TRIGGER_PREFIX: &[u8] = b"\xffvds:trigger:data:";
 const VERSION: u8 = 1;
@@ -105,8 +104,9 @@ impl Store {
         Ok(true)
     }
 
-    /// Fires a trigger and atomically persists both the new job and updated
-    /// trigger metadata. Disabled triggers return `Ok(None)`.
+    /// Routes a trigger fire to the durable Jobs subsystem. Disabled triggers
+    /// return `Ok(None)`. Cross-domain atomicity with arbitrary application
+    /// mutations is intentionally provided later by the shared transaction API.
     pub fn fire_trigger(
         &mut self,
         id: &TriggerId,
@@ -127,28 +127,13 @@ impl Store {
         }
         validate_job(&spec)?;
 
-        let job_id = random_id()?;
-        let job = crate::jobs::build_job_with_id(spec, job_id)?;
+        let job_id = self.submit_job(spec, now_ms)?;
         trigger.fire_count = trigger
             .fire_count
             .checked_add(1)
             .ok_or(TriggerError::FireCountOverflow)?;
         trigger.last_fired_at_ms = Some(now_ms);
-
-        let mut tx = self.begin()?;
-        tx.put_internal(crate::jobs::job_key_internal(&job_id), crate::jobs::encode_job_internal(&job)?)?;
-        crate::jobs::append_initial_history_internal(
-            &mut tx,
-            &job_id,
-            JobHistoryEntry {
-                sequence: 0,
-                at_ms: now_ms,
-                kind: JobHistoryKind::Submitted,
-                detail: b"triggered".to_vec(),
-            },
-        )?;
-        tx.put_internal(trigger_key(id), encode_trigger(&trigger)?)?;
-        tx.commit()?;
+        self.put_internal(trigger_key(id), encode_trigger(&trigger)?)?;
         Ok(Some(job_id))
     }
 }
@@ -366,23 +351,41 @@ impl<'a> Cursor<'a> {
     }
 
     fn u32(&mut self) -> Result<u32, TriggerError> {
-        Ok(u32::from_le_bytes(self.take(4)?.try_into().map_err(|_| TriggerError::CorruptRecord)?))
+        Ok(u32::from_le_bytes(
+            self.take(4)?
+                .try_into()
+                .map_err(|_| TriggerError::CorruptRecord)?,
+        ))
     }
 
     fn i32(&mut self) -> Result<i32, TriggerError> {
-        Ok(i32::from_le_bytes(self.take(4)?.try_into().map_err(|_| TriggerError::CorruptRecord)?))
+        Ok(i32::from_le_bytes(
+            self.take(4)?
+                .try_into()
+                .map_err(|_| TriggerError::CorruptRecord)?,
+        ))
     }
 
     fn u64(&mut self) -> Result<u64, TriggerError> {
-        Ok(u64::from_le_bytes(self.take(8)?.try_into().map_err(|_| TriggerError::CorruptRecord)?))
+        Ok(u64::from_le_bytes(
+            self.take(8)?
+                .try_into()
+                .map_err(|_| TriggerError::CorruptRecord)?,
+        ))
     }
 
     fn i64(&mut self) -> Result<i64, TriggerError> {
-        Ok(i64::from_le_bytes(self.take(8)?.try_into().map_err(|_| TriggerError::CorruptRecord)?))
+        Ok(i64::from_le_bytes(
+            self.take(8)?
+                .try_into()
+                .map_err(|_| TriggerError::CorruptRecord)?,
+        ))
     }
 
     fn array_16(&mut self) -> Result<[u8; 16], TriggerError> {
-        self.take(16)?.try_into().map_err(|_| TriggerError::CorruptRecord)
+        self.take(16)?
+            .try_into()
+            .map_err(|_| TriggerError::CorruptRecord)
     }
 
     fn bytes(&mut self) -> Result<Vec<u8>, TriggerError> {
