@@ -2,9 +2,11 @@ use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use thiserror::Error;
 
+use crate::header::{HeaderError, STORE_HEADER_LEN, StoreHeader};
 use crate::log::{HEADER_LEN, LogRecord, RecordKind, StoreError, encoded_record_len_from_prefix};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,6 +19,7 @@ enum Operation {
 pub struct Store {
     path: PathBuf,
     file: File,
+    header: StoreHeader,
     state: HashMap<Vec<u8>, Vec<u8>>,
     next_tx_id: u64,
     next_sequence: u64,
@@ -28,23 +31,37 @@ impl Store {
         let mut file = OpenOptions::new()
             .create(true)
             .read(true)
-            .append(true)
+            .write(true)
             .open(&path)?;
 
+        let header = load_or_initialize_header(&mut file)?;
         let recovery = recover(&mut file)?;
+
+        // A torn final record is a valid crash artifact. Repair the physical
+        // tail before accepting new appends so corruption never accumulates.
+        let physical_len = file.metadata()?.len();
+        if recovery.valid_end < physical_len {
+            file.set_len(recovery.valid_end)?;
+            file.sync_data()?;
+        }
         file.seek(SeekFrom::End(0))?;
 
         Ok(Self {
             path,
             file,
+            header,
             state: recovery.state,
-            next_tx_id: recovery.max_tx_id.saturating_add(1).max(1),
-            next_sequence: recovery.max_sequence.saturating_add(1).max(1),
+            next_tx_id: next_counter(recovery.max_tx_id)?,
+            next_sequence: next_counter(recovery.max_sequence)?,
         })
     }
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    pub const fn header(&self) -> &StoreHeader {
+        &self.header
     }
 
     pub fn get(&self, key: impl AsRef<[u8]>) -> Option<&[u8]> {
@@ -63,16 +80,16 @@ impl Store {
         self.state.is_empty()
     }
 
-    pub fn begin(&mut self) -> Transaction<'_> {
+    pub fn begin(&mut self) -> Result<Transaction<'_>, EngineError> {
         let tx_id = self.next_tx_id;
-        self.next_tx_id = self.next_tx_id.saturating_add(1);
+        self.next_tx_id = tx_id.checked_add(1).ok_or(EngineError::CounterExhausted)?;
 
-        Transaction {
+        Ok(Transaction {
             store: self,
             tx_id,
             operations: Vec::new(),
             finished: false,
-        }
+        })
     }
 
     fn append(
@@ -82,8 +99,11 @@ impl Store {
         payload: Vec<u8>,
     ) -> Result<(), EngineError> {
         let sequence = self.next_sequence;
-        self.next_sequence = self.next_sequence.saturating_add(1);
+        self.next_sequence = sequence
+            .checked_add(1)
+            .ok_or(EngineError::CounterExhausted)?;
         let bytes = LogRecord::new(kind, tx_id, sequence, payload).encode()?;
+        self.file.seek(SeekFrom::End(0))?;
         self.file.write_all(&bytes)?;
         Ok(())
     }
@@ -156,23 +176,43 @@ struct Recovery {
     state: HashMap<Vec<u8>, Vec<u8>>,
     max_tx_id: u64,
     max_sequence: u64,
+    valid_end: u64,
+}
+
+fn load_or_initialize_header(file: &mut File) -> Result<StoreHeader, EngineError> {
+    let len = file.metadata()?.len();
+    if len == 0 {
+        let header = StoreHeader::new(generate_store_id(), unix_time_ms()?);
+        file.seek(SeekFrom::Start(0))?;
+        file.write_all(&header.encode())?;
+        file.sync_all()?;
+        return Ok(header);
+    }
+
+    if len < STORE_HEADER_LEN as u64 {
+        return Err(HeaderError::Truncated.into());
+    }
+
+    let mut bytes = [0u8; STORE_HEADER_LEN];
+    file.seek(SeekFrom::Start(0))?;
+    file.read_exact(&mut bytes)?;
+    Ok(StoreHeader::decode(&bytes)?)
 }
 
 fn recover(file: &mut File) -> Result<Recovery, EngineError> {
-    file.seek(SeekFrom::Start(0))?;
+    file.seek(SeekFrom::Start(STORE_HEADER_LEN as u64))?;
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)?;
 
     let mut state = HashMap::new();
     let mut pending: HashMap<u64, Vec<Operation>> = HashMap::new();
+    let mut committed = std::collections::HashSet::new();
     let mut offset = 0usize;
     let mut max_tx_id = 0u64;
     let mut max_sequence = 0u64;
 
     while offset < bytes.len() {
         let remaining = &bytes[offset..];
-
-        // A partial final record is a valid crash artifact. It is ignored.
         if remaining.len() < HEADER_LEN {
             break;
         }
@@ -182,40 +222,38 @@ fn recover(file: &mut File) -> Result<Recovery, EngineError> {
             Err(StoreError::TruncatedRecord) => break,
             Err(error) => return Err(error.into()),
         };
-
         if remaining.len() < record_len {
             break;
         }
 
         let record = LogRecord::decode(&remaining[..record_len])?;
-
         if record.sequence <= max_sequence && max_sequence != 0 {
             return Err(EngineError::NonMonotonicSequence {
                 previous: max_sequence,
                 current: record.sequence,
             });
         }
+        if committed.contains(&record.tx_id) {
+            return Err(EngineError::RecordAfterCommit(record.tx_id));
+        }
 
         max_sequence = record.sequence;
         max_tx_id = max_tx_id.max(record.tx_id);
 
         match record.kind {
-            RecordKind::Put => {
-                pending
-                    .entry(record.tx_id)
-                    .or_default()
-                    .push(decode_put(&record.payload)?);
-            }
-            RecordKind::Delete => {
-                pending
-                    .entry(record.tx_id)
-                    .or_default()
-                    .push(decode_delete(&record.payload)?);
-            }
+            RecordKind::Put => pending
+                .entry(record.tx_id)
+                .or_default()
+                .push(decode_put(&record.payload)?),
+            RecordKind::Delete => pending
+                .entry(record.tx_id)
+                .or_default()
+                .push(decode_delete(&record.payload)?),
             RecordKind::Commit => {
                 if let Some(operations) = pending.remove(&record.tx_id) {
                     apply_operations(&mut state, &operations);
                 }
+                committed.insert(record.tx_id);
             }
         }
 
@@ -226,7 +264,35 @@ fn recover(file: &mut File) -> Result<Recovery, EngineError> {
         state,
         max_tx_id,
         max_sequence,
+        valid_end: STORE_HEADER_LEN as u64 + offset as u64,
     })
+}
+
+fn next_counter(max: u64) -> Result<u64, EngineError> {
+    if max == 0 {
+        Ok(1)
+    } else {
+        max.checked_add(1).ok_or(EngineError::CounterExhausted)
+    }
+}
+
+fn unix_time_ms() -> Result<i64, EngineError> {
+    let duration = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| EngineError::ClockBeforeUnixEpoch)?;
+    i64::try_from(duration.as_millis()).map_err(|_| EngineError::TimestampOverflow)
+}
+
+fn generate_store_id() -> [u8; 16] {
+    // This is a persistent uniqueness token, not a cryptographic secret. Avoiding
+    // a runtime RNG dependency keeps the core small; replication can later define
+    // stronger identity-generation requirements without changing the header width.
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_nanos())
+        .unwrap_or_default();
+    let pid = u128::from(std::process::id());
+    (now ^ (pid << 64)).to_le_bytes()
 }
 
 fn apply_operations(state: &mut HashMap<Vec<u8>, Vec<u8>>, operations: &[Operation]) {
@@ -291,6 +357,8 @@ fn decode_delete(payload: &[u8]) -> Result<Operation, EngineError> {
 pub enum EngineError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("store header error: {0}")]
+    Header(#[from] HeaderError),
     #[error("log error: {0}")]
     Log(#[from] StoreError),
     #[error("key is too large")]
@@ -299,14 +367,21 @@ pub enum EngineError {
     InvalidOperationPayload,
     #[error("transaction is already finished")]
     TransactionFinished,
+    #[error("transaction or sequence counter exhausted")]
+    CounterExhausted,
+    #[error("system clock is before the Unix epoch")]
+    ClockBeforeUnixEpoch,
+    #[error("system timestamp does not fit the store format")]
+    TimestampOverflow,
     #[error("non-monotonic log sequence: previous {previous}, current {current}")]
     NonMonotonicSequence { previous: u64, current: u64 },
+    #[error("log contains a record after transaction {0} was committed")]
+    RecordAfterCommit(u64),
 }
 
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
 
@@ -319,11 +394,20 @@ mod tests {
     }
 
     #[test]
+    fn new_store_has_persistent_header_identity() {
+        let path = temp_store_path("header");
+        let first_id = Store::open(&path).unwrap().header().store_id;
+        let second_id = Store::open(&path).unwrap().header().store_id;
+        assert_eq!(first_id, second_id);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn committed_values_survive_reopen() {
         let path = temp_store_path("reopen");
         {
             let mut store = Store::open(&path).unwrap();
-            let mut tx = store.begin();
+            let mut tx = store.begin().unwrap();
             tx.put(b"user:1", b"Helder").unwrap();
             tx.put(b"user:2", b"Bruna").unwrap();
             tx.commit().unwrap();
@@ -341,9 +425,8 @@ mod tests {
         let path = temp_store_path("uncommitted");
         {
             let mut store = Store::open(&path).unwrap();
-            let mut tx = store.begin();
+            let mut tx = store.begin().unwrap();
             tx.put(b"ghost", b"must-not-exist").unwrap();
-            // Simulates a process dying before COMMIT by dropping the transaction/store.
         }
         {
             let store = Store::open(&path).unwrap();
@@ -353,15 +436,36 @@ mod tests {
     }
 
     #[test]
+    fn torn_tail_is_removed_on_reopen() {
+        let path = temp_store_path("torn-tail");
+        {
+            let mut store = Store::open(&path).unwrap();
+            let mut tx = store.begin().unwrap();
+            tx.put(b"safe", b"value").unwrap();
+            tx.commit().unwrap();
+        }
+        let valid_len = fs::metadata(&path).unwrap().len();
+        {
+            let mut file = OpenOptions::new().append(true).open(&path).unwrap();
+            file.write_all(b"VDS1\x01\x02").unwrap();
+        }
+        assert!(fs::metadata(&path).unwrap().len() > valid_len);
+        let store = Store::open(&path).unwrap();
+        assert_eq!(store.get(b"safe"), Some(b"value".as_slice()));
+        assert_eq!(fs::metadata(&path).unwrap().len(), valid_len);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn delete_is_transactional_and_durable() {
         let path = temp_store_path("delete");
         {
             let mut store = Store::open(&path).unwrap();
-            let mut tx = store.begin();
+            let mut tx = store.begin().unwrap();
             tx.put(b"key", b"value").unwrap();
             tx.commit().unwrap();
 
-            let mut tx = store.begin();
+            let mut tx = store.begin().unwrap();
             tx.delete(b"key").unwrap();
             tx.commit().unwrap();
             assert_eq!(store.get(b"key"), None);
@@ -376,7 +480,7 @@ mod tests {
         let path = temp_store_path("rollback");
         {
             let mut store = Store::open(&path).unwrap();
-            let mut tx = store.begin();
+            let mut tx = store.begin().unwrap();
             tx.put(b"a", b"1").unwrap();
             tx.rollback().unwrap();
             assert_eq!(store.get(b"a"), None);
