@@ -26,6 +26,11 @@ pub struct CheckpointReport {
 impl Store {
     /// Creates a verified physical checkpoint without overwriting an existing
     /// destination. The exact store identity and log are preserved.
+    ///
+    /// The physical source image is produced through `backup_to`, which clones
+    /// the Store's already-locked file handle. This is important on Windows,
+    /// where reopening the source pathname while an exclusive byte-range lock
+    /// is held can fail even in the same process.
     pub fn checkpoint_to(
         &self,
         destination: impl AsRef<Path>,
@@ -34,7 +39,20 @@ impl Store {
         let destination = destination.as_ref();
         ensure_distinct_destination(self.path(), destination)?;
 
-        let mut source = File::open(self.path())?;
+        let temporary = reserve_temporary_sibling(destination)?;
+        let result = self.checkpoint_from_temporary(&temporary, destination);
+        let _ = fs::remove_file(&temporary);
+        result
+    }
+
+    fn checkpoint_from_temporary(
+        &self,
+        temporary: &Path,
+        destination: &Path,
+    ) -> Result<CheckpointReport, CheckpointError> {
+        self.backup_to(temporary)?;
+
+        let mut source = File::open(temporary)?;
         let mut target = OpenOptions::new()
             .create_new(true)
             .write(true)
@@ -90,6 +108,30 @@ impl Store {
     }
 }
 
+fn reserve_temporary_sibling(destination: &Path) -> Result<PathBuf, CheckpointError> {
+    let parent = destination.parent().unwrap_or_else(|| Path::new("."));
+    let base = destination
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("checkpoint");
+
+    for _ in 0..16 {
+        let mut nonce = [0u8; 8];
+        getrandom::fill(&mut nonce).map_err(|error| CheckpointError::Randomness(error.to_string()))?;
+        let suffix = u64::from_le_bytes(nonce);
+        let candidate = parent.join(format!(".{base}.checkpoint-{suffix:016x}.tmp"));
+        match OpenOptions::new().write(true).create_new(true).open(&candidate) {
+            Ok(file) => {
+                drop(file);
+                return Ok(candidate);
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(CheckpointError::Io(error)),
+        }
+    }
+    Err(CheckpointError::TemporaryNameExhausted)
+}
+
 fn ensure_distinct_destination(source: &Path, destination: &Path) -> Result<(), CheckpointError> {
     if source == destination {
         return Err(CheckpointError::DestinationIsSource);
@@ -127,6 +169,10 @@ pub enum CheckpointError {
     IdentityMismatch,
     #[error("checkpoint verification does not match copied bytes")]
     VerificationMismatch,
+    #[error("failed to obtain randomness for checkpoint temporary file: {0}")]
+    Randomness(String),
+    #[error("could not reserve a checkpoint temporary file")]
+    TemporaryNameExhausted,
 }
 
 #[cfg(test)]
