@@ -98,6 +98,7 @@ impl Store {
             ("outbox", b"\xffvds:outbox:".as_slice()),
             ("streams", b"\xffvds:stream:".as_slice()),
             ("subscriptions", b"\xffvds:sub:".as_slice()),
+            ("consumer_groups", b"\xffvds:cg:".as_slice()),
             ("objects", b"\xffvds:obj:".as_slice()),
             ("workflows", b"\xffvds:wf:".as_slice()),
         ]
@@ -199,6 +200,12 @@ mod tests {
                 .any(|entry| entry.name == "triggers")
         );
         assert!(report.namespaces.iter().any(|entry| entry.name == "outbox"));
+        assert!(
+            report
+                .namespaces
+                .iter()
+                .any(|entry| entry.name == "consumer_groups")
+        );
         drop(store);
         let _ = fs::remove_file(path);
     }
