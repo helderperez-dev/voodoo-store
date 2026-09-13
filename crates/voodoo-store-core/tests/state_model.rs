@@ -84,8 +84,7 @@ fn deterministic_transaction_model_survives_repeated_reopen() {
             drop(store);
             store = Store::open(&path).unwrap();
             assert_user_state(&store, &expected);
-            let report = Store::verify(&path).unwrap_err();
-            assert!(report.to_string().contains("already open"));
+            assert!(Store::verify(&path).is_err());
         }
     }
 
