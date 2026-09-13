@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -207,6 +208,12 @@ enum PendingOperation {
     Delete(Vec<u8>),
 }
 
+enum PendingLookup<'a> {
+    Value(&'a [u8]),
+    Deleted,
+    Unchanged,
+}
+
 #[pyclass(name = "Transaction")]
 struct PyTransaction {
     slot: Arc<Mutex<StoreSlot>>,
@@ -217,6 +224,67 @@ struct PyTransaction {
 
 #[pymethods]
 impl PyTransaction {
+    fn get(&self, py: Python<'_>, key: &[u8]) -> PyResult<Option<Py<PyBytes>>> {
+        self.ensure_open()?;
+        match self.lookup_pending(key) {
+            PendingLookup::Value(value) => Ok(Some(PyBytes::new(py, value).unbind())),
+            PendingLookup::Deleted => Ok(None),
+            PendingLookup::Unchanged => Ok(self
+                .store
+                .as_ref()
+                .and_then(|store| store.get(key))
+                .map(|value| PyBytes::new(py, value).unbind())),
+        }
+    }
+
+    fn contains(&self, key: &[u8]) -> PyResult<bool> {
+        self.ensure_open()?;
+        match self.lookup_pending(key) {
+            PendingLookup::Value(_) => Ok(true),
+            PendingLookup::Deleted => Ok(false),
+            PendingLookup::Unchanged => Ok(self
+                .store
+                .as_ref()
+                .is_some_and(|store| store.contains_key(key))),
+        }
+    }
+
+    fn scan_prefix(
+        &self,
+        py: Python<'_>,
+        prefix: &[u8],
+    ) -> PyResult<Vec<(Py<PyBytes>, Py<PyBytes>)>> {
+        self.ensure_open()?;
+        let store = self
+            .store
+            .as_ref()
+            .ok_or_else(|| TransactionFinishedError::new_err("transaction is finished"))?;
+        let mut entries: BTreeMap<Vec<u8>, Vec<u8>> =
+            store.scan_prefix(prefix).into_iter().collect();
+
+        for operation in &self.operations {
+            match operation {
+                PendingOperation::Put(key, value) if key.starts_with(prefix) => {
+                    entries.insert(key.clone(), value.clone());
+                }
+                PendingOperation::Delete(key) if key.starts_with(prefix) => {
+                    entries.remove(key);
+                }
+                _ => {}
+            }
+        }
+
+        Ok(entries
+            .into_iter()
+            .map(|(key, value)| {
+                (
+                    PyBytes::new(py, &key).unbind(),
+                    PyBytes::new(py, &value).unbind(),
+                )
+            })
+            .collect())
+    }
+
     fn put(&mut self, key: &[u8], value: &[u8]) -> PyResult<()> {
         self.ensure_open()?;
         self.operations
@@ -296,6 +364,21 @@ impl PyTransaction {
         } else {
             Ok(())
         }
+    }
+
+    fn lookup_pending(&self, key: &[u8]) -> PendingLookup<'_> {
+        for operation in self.operations.iter().rev() {
+            match operation {
+                PendingOperation::Put(staged_key, value) if staged_key.as_slice() == key => {
+                    return PendingLookup::Value(value);
+                }
+                PendingOperation::Delete(staged_key) if staged_key.as_slice() == key => {
+                    return PendingLookup::Deleted;
+                }
+                _ => {}
+            }
+        }
+        PendingLookup::Unchanged
     }
 
     fn restore_store(&mut self, store: Store) -> PyResult<()> {
