@@ -6,7 +6,7 @@
 
 use thiserror::Error;
 
-use crate::{EngineError, Store};
+use crate::{EngineError, Store, Transaction};
 
 const META_PREFIX: &[u8] = b"\xffvds:col:meta:";
 const RECORD_PREFIX: &[u8] = b"\xffvds:col:record:";
@@ -120,49 +120,8 @@ impl Store {
         value: impl AsRef<[u8]>,
         indexes: &[IndexValue],
     ) -> Result<(), CollectionError> {
-        let collection = collection.as_ref();
-        let primary_key = primary_key.as_ref();
-        ensure_collection(self, collection)?;
-        if primary_key.is_empty() {
-            return Err(CollectionError::EmptyPrimaryKey);
-        }
-
-        let record_key = record_key(collection, primary_key)?;
-        let existing = self.get(&record_key).map(decode_record_value).transpose()?;
-
-        for index in indexes {
-            let definition = index_definition(self, collection, &index.index)?;
-            if definition.unique {
-                let prefix = index_value_prefix(collection, &index.index, &index.value)?;
-                for (_, owner) in self.scan_prefix(prefix) {
-                    if owner != primary_key {
-                        return Err(CollectionError::UniqueIndexViolation {
-                            index: index.index.clone(),
-                        });
-                    }
-                }
-            }
-        }
-
-        let encoded = encode_record_value(value.as_ref(), indexes)?;
         let mut tx = self.begin()?;
-        if let Some(existing) = existing {
-            for old_index in existing.indexes {
-                tx.delete_internal(index_entry_key(
-                    collection,
-                    &old_index.index,
-                    &old_index.value,
-                    primary_key,
-                )?)?;
-            }
-        }
-        tx.put_internal(&record_key, encoded)?;
-        for index in indexes {
-            tx.put_internal(
-                index_entry_key(collection, &index.index, &index.value, primary_key)?,
-                primary_key,
-            )?;
-        }
+        tx.upsert_record(collection, primary_key, value, indexes)?;
         tx.commit()?;
         Ok(())
     }
@@ -192,25 +151,10 @@ impl Store {
         collection: impl AsRef<[u8]>,
         primary_key: impl AsRef<[u8]>,
     ) -> Result<bool, CollectionError> {
-        let collection = collection.as_ref();
-        let primary_key = primary_key.as_ref();
-        let key = record_key(collection, primary_key)?;
-        let Some(existing) = self.get(&key).map(decode_record_value).transpose()? else {
-            return Ok(false);
-        };
-
         let mut tx = self.begin()?;
-        tx.delete_internal(key)?;
-        for index in existing.indexes {
-            tx.delete_internal(index_entry_key(
-                collection,
-                &index.index,
-                &index.value,
-                primary_key,
-            )?)?;
-        }
+        let deleted = tx.delete_record(collection, primary_key)?;
         tx.commit()?;
-        Ok(true)
+        Ok(deleted)
     }
 
     pub fn scan_collection(
@@ -253,6 +197,91 @@ impl Store {
     }
 }
 
+impl Transaction<'_> {
+    /// Stages a collection record and all secondary-index mutations in this
+    /// transaction. Unique checks see committed state plus prior staged writes.
+    pub fn upsert_record(
+        &mut self,
+        collection: impl AsRef<[u8]>,
+        primary_key: impl AsRef<[u8]>,
+        value: impl AsRef<[u8]>,
+        indexes: &[IndexValue],
+    ) -> Result<(), CollectionError> {
+        let collection = collection.as_ref();
+        let primary_key = primary_key.as_ref();
+        ensure_collection_tx(self, collection)?;
+        if primary_key.is_empty() {
+            return Err(CollectionError::EmptyPrimaryKey);
+        }
+
+        let record_key = record_key(collection, primary_key)?;
+        let existing = self
+            .get_internal(&record_key)
+            .map(decode_record_value)
+            .transpose()?;
+
+        for index in indexes {
+            let definition = index_definition_tx(self, collection, &index.index)?;
+            if definition.unique {
+                let prefix = index_value_prefix(collection, &index.index, &index.value)?;
+                for (_, owner) in self.scan_prefix_internal(prefix) {
+                    if owner != primary_key {
+                        return Err(CollectionError::UniqueIndexViolation {
+                            index: index.index.clone(),
+                        });
+                    }
+                }
+            }
+        }
+
+        if let Some(existing) = existing {
+            for old_index in existing.indexes {
+                self.delete_internal(index_entry_key(
+                    collection,
+                    &old_index.index,
+                    &old_index.value,
+                    primary_key,
+                )?)?;
+            }
+        }
+
+        self.put_internal(&record_key, encode_record_value(value.as_ref(), indexes)?)?;
+        for index in indexes {
+            self.put_internal(
+                index_entry_key(collection, &index.index, &index.value, primary_key)?,
+                primary_key,
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Stages a collection record deletion and all of its secondary-index
+    /// deletions in this transaction.
+    pub fn delete_record(
+        &mut self,
+        collection: impl AsRef<[u8]>,
+        primary_key: impl AsRef<[u8]>,
+    ) -> Result<bool, CollectionError> {
+        let collection = collection.as_ref();
+        let primary_key = primary_key.as_ref();
+        let key = record_key(collection, primary_key)?;
+        let Some(existing) = self.get_internal(&key).map(decode_record_value).transpose()? else {
+            return Ok(false);
+        };
+
+        self.delete_internal(key)?;
+        for index in existing.indexes {
+            self.delete_internal(index_entry_key(
+                collection,
+                &index.index,
+                &index.value,
+                primary_key,
+            )?)?;
+        }
+        Ok(true)
+    }
+}
+
 #[derive(Debug)]
 struct StoredRecord {
     value: Vec<u8>,
@@ -266,6 +295,13 @@ fn ensure_collection(store: &Store, name: &[u8]) -> Result<(), CollectionError> 
     Ok(())
 }
 
+fn ensure_collection_tx(tx: &Transaction<'_>, name: &[u8]) -> Result<(), CollectionError> {
+    if tx.get_internal(meta_key(name)?).is_none() {
+        return Err(CollectionError::CollectionNotFound);
+    }
+    Ok(())
+}
+
 fn index_definition(
     store: &Store,
     collection: &[u8],
@@ -274,6 +310,21 @@ fn index_definition(
     let encoded = store
         .get(index_meta_key(collection, index)?)
         .ok_or(CollectionError::IndexNotFound)?;
+    decode_index_definition(index, encoded)
+}
+
+fn index_definition_tx(
+    tx: &Transaction<'_>,
+    collection: &[u8],
+    index: &[u8],
+) -> Result<IndexDefinition, CollectionError> {
+    let encoded = tx
+        .get_internal(index_meta_key(collection, index)?)
+        .ok_or(CollectionError::IndexNotFound)?;
+    decode_index_definition(index, encoded)
+}
+
+fn decode_index_definition(index: &[u8], encoded: &[u8]) -> Result<IndexDefinition, CollectionError> {
     if encoded.len() != 2 || encoded[0] != FORMAT_VERSION || encoded[1] > 1 {
         return Err(CollectionError::CorruptMetadata);
     }
@@ -488,6 +539,8 @@ mod tests {
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    use crate::{JobSpec, Store};
+
     use super::*;
 
     fn temp_store_path(name: &str) -> PathBuf {
@@ -496,6 +549,20 @@ mod tests {
             .unwrap()
             .as_nanos();
         std::env::temp_dir().join(format!("voodoo-store-collection-{name}-{nonce}.vstore"))
+    }
+
+    fn unique_email() -> IndexDefinition {
+        IndexDefinition {
+            name: b"email".to_vec(),
+            unique: true,
+        }
+    }
+
+    fn email(value: &[u8]) -> IndexValue {
+        IndexValue {
+            index: b"email".to_vec(),
+            value: value.to_vec(),
+        }
     }
 
     #[test]
@@ -508,26 +575,13 @@ mod tests {
                     .create_collection(b"users", &CollectionDefinition::default())
                     .unwrap()
             );
-            assert!(
-                store
-                    .define_index(
-                        b"users",
-                        &IndexDefinition {
-                            name: b"email".to_vec(),
-                            unique: true,
-                        },
-                    )
-                    .unwrap()
-            );
+            assert!(store.define_index(b"users", &unique_email()).unwrap());
             store
                 .upsert_record(
                     b"users",
                     b"u1",
                     br#"{"name":"Ada"}"#,
-                    &[IndexValue {
-                        index: b"email".to_vec(),
-                        value: b"ada@example.com".to_vec(),
-                    }],
+                    &[email(b"ada@example.com")],
                 )
                 .unwrap();
         }
@@ -551,28 +605,14 @@ mod tests {
         store
             .create_collection(b"users", &CollectionDefinition::default())
             .unwrap();
-        store
-            .define_index(
-                b"users",
-                &IndexDefinition {
-                    name: b"email".to_vec(),
-                    unique: true,
-                },
-            )
-            .unwrap();
-        let old = [IndexValue {
-            index: b"email".to_vec(),
-            value: b"old@example.com".to_vec(),
-        }];
+        store.define_index(b"users", &unique_email()).unwrap();
+        let old = [email(b"old@example.com")];
         store.upsert_record(b"users", b"u1", b"A", &old).unwrap();
         assert!(matches!(
             store.upsert_record(b"users", b"u2", b"B", &old),
             Err(CollectionError::UniqueIndexViolation { .. })
         ));
-        let next = [IndexValue {
-            index: b"email".to_vec(),
-            value: b"new@example.com".to_vec(),
-        }];
+        let next = [email(b"new@example.com")];
         store.upsert_record(b"users", b"u1", b"A2", &next).unwrap();
         assert!(
             store
@@ -612,6 +652,117 @@ mod tests {
         assert_eq!(definition.schema_version, 2);
         assert_eq!(definition.codec, b"cbor");
         drop(store);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn transaction_combines_collection_job_and_kv_atomically() {
+        let path = temp_store_path("cross-domain");
+        let mut store = Store::open(&path).unwrap();
+        store
+            .create_collection(b"orders", &CollectionDefinition::default())
+            .unwrap();
+        store
+            .define_index(
+                b"orders",
+                &IndexDefinition {
+                    name: b"status".to_vec(),
+                    unique: false,
+                },
+            )
+            .unwrap();
+
+        let job_id;
+        {
+            let mut tx = store.begin().unwrap();
+            tx.put(b"counter:orders", b"1").unwrap();
+            tx.upsert_record(
+                b"orders",
+                b"42",
+                b"paid",
+                &[IndexValue {
+                    index: b"status".to_vec(),
+                    value: b"paid".to_vec(),
+                }],
+            )
+            .unwrap();
+            job_id = tx
+                .enqueue_job(JobSpec::new(b"receipt", b"42"), 100)
+                .unwrap();
+            tx.commit().unwrap();
+        }
+
+        assert_eq!(store.get(b"counter:orders"), Some(b"1".as_slice()));
+        assert_eq!(
+            store.get_record(b"orders", b"42").unwrap().unwrap().value,
+            b"paid"
+        );
+        assert!(store.get_job(&job_id).unwrap().is_some());
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn transaction_unique_index_sees_prior_staged_writes() {
+        let path = temp_store_path("staged-unique");
+        let mut store = Store::open(&path).unwrap();
+        store
+            .create_collection(b"users", &CollectionDefinition::default())
+            .unwrap();
+        store.define_index(b"users", &unique_email()).unwrap();
+
+        let mut tx = store.begin().unwrap();
+        tx.upsert_record(b"users", b"u1", b"A", &[email(b"same@example.com")])
+            .unwrap();
+        assert!(matches!(
+            tx.upsert_record(b"users", b"u2", b"B", &[email(b"same@example.com")]),
+            Err(CollectionError::UniqueIndexViolation { .. })
+        ));
+        tx.rollback().unwrap();
+        assert!(store.scan_collection(b"users").unwrap().is_empty());
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn staged_index_delete_releases_unique_value_inside_same_transaction() {
+        let path = temp_store_path("release-unique");
+        let mut store = Store::open(&path).unwrap();
+        store
+            .create_collection(b"users", &CollectionDefinition::default())
+            .unwrap();
+        store.define_index(b"users", &unique_email()).unwrap();
+        store
+            .upsert_record(
+                b"users",
+                b"u1",
+                b"A",
+                &[email(b"old@example.com")],
+            )
+            .unwrap();
+
+        let mut tx = store.begin().unwrap();
+        tx.upsert_record(
+            b"users",
+            b"u1",
+            b"A2",
+            &[email(b"new@example.com")],
+        )
+        .unwrap();
+        tx.upsert_record(
+            b"users",
+            b"u2",
+            b"B",
+            &[email(b"old@example.com")],
+        )
+        .unwrap();
+        tx.commit().unwrap();
+
+        assert_eq!(
+            store
+                .query_index_exact(b"users", b"email", b"old@example.com")
+                .unwrap()[0]
+                .primary_key,
+            b"u2"
+        );
         let _ = fs::remove_file(path);
     }
 }
