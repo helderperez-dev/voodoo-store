@@ -13,6 +13,7 @@ pub mod log;
 pub mod model;
 pub mod queue;
 pub mod restore;
+pub mod ttl;
 
 pub use atomic::{AtomicError, CasOutcome};
 pub use compaction::CompactionReport;
@@ -24,3 +25,4 @@ pub use model::{
 };
 pub use queue::{PushOptions, Queue, QueueError, QueueMessage, QueueState, QueueStats};
 pub use restore::RestoreReport;
+pub use ttl::{TtlError, TtlInfo, TtlSweepReport};
