@@ -136,8 +136,8 @@ impl<'a> Queue<'a> {
 
         let key = self.message_key(id);
         let mut tx = self.store.begin()?;
-        tx.put(&self.meta_key, next_id.to_le_bytes())?;
-        tx.put(key, encode_message(&message)?)?;
+        tx.put_internal(&self.meta_key, next_id.to_le_bytes())?;
+        tx.put_internal(key, encode_message(&message)?)?;
         tx.commit()?;
         Ok(id)
     }
@@ -184,7 +184,7 @@ impl<'a> Queue<'a> {
             .ok_or(QueueError::AttemptExhausted)?;
         message.state = QueueState::Leased;
         message.lease_until_ms = lease_until_ms;
-        self.store.put(&key, encode_message(&message)?)?;
+        self.store.put_internal(&key, encode_message(&message)?)?;
 
         Ok(Some(QueueMessage {
             id: message.id,
@@ -201,7 +201,7 @@ impl<'a> Queue<'a> {
         let key = self.message_key(id);
         let message = self.load_message(&key)?.ok_or(QueueError::NotFound(id))?;
         validate_lease(&message, lease_generation)?;
-        self.store.delete(key)?;
+        self.store.delete_internal(key)?;
         Ok(())
     }
 
@@ -217,7 +217,7 @@ impl<'a> Queue<'a> {
         message.state = QueueState::Ready;
         message.available_at_ms = available_at_ms;
         message.lease_until_ms = 0;
-        self.store.put(key, encode_message(&message)?)?;
+        self.store.put_internal(key, encode_message(&message)?)?;
         Ok(())
     }
 
@@ -227,7 +227,7 @@ impl<'a> Queue<'a> {
         validate_lease(&message, lease_generation)?;
         message.state = QueueState::Dead;
         message.lease_until_ms = 0;
-        self.store.put(key, encode_message(&message)?)?;
+        self.store.put_internal(key, encode_message(&message)?)?;
         Ok(())
     }
 
@@ -273,7 +273,7 @@ impl<'a> Queue<'a> {
         let count = u64::try_from(keys.len()).map_err(|_| QueueError::CountOverflow)?;
         let mut tx = self.store.begin()?;
         for key in keys {
-            tx.delete(key)?;
+            tx.delete_internal(key)?;
         }
         tx.commit()?;
         Ok(count)
