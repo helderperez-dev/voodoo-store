@@ -45,7 +45,10 @@ fn run() -> Result<(), Box<dyn Error>> {
             require_len(&args, 3)?;
             let report = Store::verify(&args[2])?;
             println!("store_id={}", hex(&report.header.store_id));
-            println!("format={}.{}", report.header.format_major, report.header.format_minor);
+            println!(
+                "format={}.{}",
+                report.header.format_major, report.header.format_minor
+            );
             println!("file_bytes={}", report.file_bytes);
             println!("valid_bytes={}", report.valid_bytes);
             println!("records={}", report.records);
@@ -64,8 +67,16 @@ fn run() -> Result<(), Box<dyn Error>> {
             if args.len() < 5 || args.len() > 7 {
                 return Err("usage: voodoo-store queue-push <store> <queue> <payload> [available_at_ms] [priority]".into());
             }
-            let available_at_ms = args.get(5).map(|value| value.parse()).transpose()?.unwrap_or(0);
-            let priority = args.get(6).map(|value| value.parse()).transpose()?.unwrap_or(0);
+            let available_at_ms = args
+                .get(5)
+                .map(|value| value.parse())
+                .transpose()?
+                .unwrap_or(0);
+            let priority = args
+                .get(6)
+                .map(|value| value.parse())
+                .transpose()?
+                .unwrap_or(0);
             let mut store = Store::open(&args[2])?;
             let mut queue = store.queue(args[3].as_bytes())?;
             let id = queue.push_with_options(
