@@ -24,6 +24,7 @@ pub mod queue;
 pub mod restore;
 pub mod rpc;
 pub mod snapshot;
+pub mod transaction_domains;
 pub mod transactional;
 pub mod triggers;
 pub mod ttl;
@@ -55,6 +56,7 @@ pub use queue::{PushOptions, Queue, QueueError, QueueMessage, QueueState, QueueS
 pub use restore::RestoreReport;
 pub use rpc::{RpcError, RpcExpireReport, RpcRequest, RpcRequestId, RpcResponse};
 pub use snapshot::{SnapshotError, SnapshotReport};
+pub use transaction_domains::DomainTransactionError;
 pub use transactional::TransactionalError;
 pub use triggers::{DurableTrigger, TriggerError, TriggerId, TriggerSource};
 pub use ttl::{TtlError, TtlInfo, TtlSweepReport};
