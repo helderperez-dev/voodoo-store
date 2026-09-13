@@ -37,12 +37,14 @@ Implemented today:
 - [x] storage/namespace health accounting
 - [x] typed cross-domain transactions spanning application KV, Collections, Jobs, Queues, Streams/Topics, Objects, Outbox, RPC and Workflows
 - [x] transaction-aware Job idempotency, including prior staged jobs
+- [x] Jobs-owned v1 wire codec path shared by normal and transactional submission
 - [x] standalone CLI
 - [x] C ABI v2 foundation with transactions, errors and panic containment
 - [x] deterministic torn-write, corruption and process-crash tests
 - [x] deterministic transactional state-model stress test with repeated reopen/recovery
 - [x] Format + Clippy + Linux/macOS/Windows + Rust 1.85 CI baseline
 - [x] executable application-state example and adoption quickstart
+- [x] language binding contract defining ownership, bytes-first semantics and framework boundaries
 
 The next integration milestone is intentionally **Python binding + Voodoo adapter**. Core work continues only where it protects format stability, durability, or the API surface that the binding will expose.
 
@@ -149,7 +151,7 @@ Jobs and time:
 - [x] application KV + Job enqueue in one transaction
 - [x] cross-domain transaction operations for Queue / Stream / Topic / Objects
 - [x] trigger firing fully transactional with trigger metadata update
-- [ ] centralize the v1 Job wire codec currently shared by Jobs and transactional helper
+- [x] central Jobs-owned v1 wire codec/staging path used by transactional enqueue
 - [ ] richer retry policies and jitter
 - [ ] timezone-aware cron as an optional layer (core remains deterministic UTC)
 
@@ -250,11 +252,11 @@ Required before starting the Python/Voodoo implementation:
 - [x] stale-generation-safe offline activation and recovery helper
 - [x] deterministic cross-platform crash/fault/state-model tests
 - [x] C ABI foundation proving language-neutral engine ownership
-- [ ] centralize duplicate Job v1 codec before freezing the binding-facing job contract
-- [ ] final CI gate after the codec cleanup
-- [ ] write the binding-surface contract / ownership rules
+- [x] centralize Job v1 wire codec/staging before freezing the binding-facing job contract
+- [x] final core CI gate after the codec cleanup
+- [x] write the binding-surface contract / ownership rules
 
-**The Python package and Voodoo Framework adapter start immediately after this gate. They are intentionally not implemented in this milestone.**
+**This gate is now closed. The next feature milestone is the Python package, followed by the Voodoo Framework adapter. They are intentionally not implemented in the Rust-core milestone.**
 
 ## M7.5 — Voodoo Store Studio
 
@@ -314,6 +316,7 @@ Goal: connect correct local stores safely.
 - [x] C ABI v2 foundation
 - [x] C ABI transactions and `last_error`
 - [x] standalone CLI
+- [x] language-binding ownership/bytes/error contract
 - [ ] complete C ABI coverage for Queue / Collections / Jobs / Streams / Objects / Workflows
 - [ ] Python binding package — **next integration milestone**
 - [ ] Voodoo Framework adapter — **immediately after Python binding**
