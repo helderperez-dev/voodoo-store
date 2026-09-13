@@ -2,6 +2,7 @@
 members = [
     "crates/voodoo-store-core",
     "crates/voodoo-store-ffi",
+    "crates/voodoo-store-cli",
 ]
 resolver = "2"
 
