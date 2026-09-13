@@ -12,6 +12,7 @@ pub mod header;
 pub mod log;
 pub mod model;
 pub mod queue;
+pub mod restore;
 
 pub use atomic::{AtomicError, CasOutcome};
 pub use compaction::CompactionReport;
@@ -22,3 +23,4 @@ pub use model::{
     DeliverySemantics, DestinationKind, JobState, MessageEnvelope, ScheduleKind, TraceContext,
 };
 pub use queue::{PushOptions, Queue, QueueError, QueueMessage, QueueState, QueueStats};
+pub use restore::RestoreReport;
