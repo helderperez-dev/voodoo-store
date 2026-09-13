@@ -117,10 +117,15 @@ fn reserve_temporary_sibling(destination: &Path) -> Result<PathBuf, CheckpointEr
 
     for _ in 0..16 {
         let mut nonce = [0u8; 8];
-        getrandom::fill(&mut nonce).map_err(|error| CheckpointError::Randomness(error.to_string()))?;
+        getrandom::fill(&mut nonce)
+            .map_err(|error| CheckpointError::Randomness(error.to_string()))?;
         let suffix = u64::from_le_bytes(nonce);
         let candidate = parent.join(format!(".{base}.checkpoint-{suffix:016x}.tmp"));
-        match OpenOptions::new().write(true).create_new(true).open(&candidate) {
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
             Ok(file) => {
                 drop(file);
                 return Ok(candidate);
