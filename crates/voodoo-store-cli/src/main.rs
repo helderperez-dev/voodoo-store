@@ -311,11 +311,8 @@ fn run() -> Result<(), Box<dyn Error>> {
             require_len(&args, 7)?;
             let after_ms: i64 = args[6].parse()?;
             let mut store = Store::open(&args[2])?;
-            let id = store.create_cron_schedule(
-                &args[3],
-                job_spec(&args[4], &args[5]),
-                after_ms,
-            )?;
+            let id =
+                store.create_cron_schedule(&args[3], job_spec(&args[4], &args[5]), after_ms)?;
             println!("id={}", hex(&id));
         }
         "cron-list" => {
@@ -523,9 +520,7 @@ fn verify(args: &[String]) -> Result<(), Box<dyn Error>> {
 
 fn collection_create(args: &[String]) -> Result<(), Box<dyn Error>> {
     if args.len() < 4 || args.len() > 5 {
-        return Err(
-            "usage: voodoo-store collection-create <store> <collection> [codec]".into(),
-        );
+        return Err("usage: voodoo-store collection-create <store> <collection> [codec]".into());
     }
     let mut store = Store::open(&args[2])?;
     let definition = CollectionDefinition {
@@ -607,11 +602,9 @@ fn collection_get(args: &[String]) -> Result<(), Box<dyn Error>> {
 fn collection_query(args: &[String]) -> Result<(), Box<dyn Error>> {
     require_len(args, 6)?;
     let store = Store::open(&args[2])?;
-    for record in store.query_index_exact(
-        args[3].as_bytes(),
-        args[4].as_bytes(),
-        args[5].as_bytes(),
-    )? {
+    for record in
+        store.query_index_exact(args[3].as_bytes(), args[4].as_bytes(), args[5].as_bytes())?
+    {
         println!(
             "{}\t{}",
             String::from_utf8_lossy(&record.primary_key),
