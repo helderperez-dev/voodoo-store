@@ -1,0 +1,71 @@
+name: Release Python
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (for example: 0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: create Python release tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate version format
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          python - <<'PY'
+          import os, re, sys
+          version = os.environ["VERSION"]
+          if not re.fullmatch(r"\d+\.\d+\.\d+(?:[a-zA-Z0-9.-]+)?", version):
+              sys.exit(f"Invalid version: {version}")
+          PY
+
+      - name: Validate pyproject version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          python - <<'PY'
+          import os, pathlib, re, sys
+          text = pathlib.Path("pyproject.toml").read_text()
+          match = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
+          if not match:
+              sys.exit("Could not find [project] version in pyproject.toml")
+          actual = match.group(1)
+          expected = os.environ["VERSION"]
+          if actual != expected:
+              sys.exit(f"pyproject.toml version is {actual}, but requested release is {expected}")
+          print(f"Version validated: {actual}")
+          PY
+
+      - name: Ensure tag does not already exist
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          TAG="python-v${VERSION}"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists"
+            exit 1
+          fi
+
+      - name: Create and push release tag
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          TAG="python-v${VERSION}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Python release ${VERSION}"
+          git push origin "$TAG"
+          echo "Created $TAG"
