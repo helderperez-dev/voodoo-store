@@ -5,6 +5,7 @@
 //! Language bindings must sit above this crate so the on-disk format and core
 //! semantics remain portable and independently usable.
 
+pub mod activation;
 pub mod atomic;
 pub mod cdc;
 pub mod checkpoint;
@@ -34,6 +35,10 @@ pub mod triggers;
 pub mod ttl;
 pub mod workflow;
 
+pub use activation::{
+    ActivationError, ActivationRecovery, GenerationActivationReport, activate_generation_offline,
+    recover_generation_activation,
+};
 pub use atomic::{AtomicError, CasOutcome};
 pub use cdc::{ChangeFeedError, ChangeKind, ChangeRecord};
 pub use checkpoint::{CheckpointError, CheckpointReport};
