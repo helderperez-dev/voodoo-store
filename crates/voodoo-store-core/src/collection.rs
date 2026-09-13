@@ -265,7 +265,11 @@ impl Transaction<'_> {
         let collection = collection.as_ref();
         let primary_key = primary_key.as_ref();
         let key = record_key(collection, primary_key)?;
-        let Some(existing) = self.get_internal(&key).map(decode_record_value).transpose()? else {
+        let Some(existing) = self
+            .get_internal(&key)
+            .map(decode_record_value)
+            .transpose()?
+        else {
             return Ok(false);
         };
 
@@ -324,7 +328,10 @@ fn index_definition_tx(
     decode_index_definition(index, encoded)
 }
 
-fn decode_index_definition(index: &[u8], encoded: &[u8]) -> Result<IndexDefinition, CollectionError> {
+fn decode_index_definition(
+    index: &[u8],
+    encoded: &[u8],
+) -> Result<IndexDefinition, CollectionError> {
     if encoded.len() != 2 || encoded[0] != FORMAT_VERSION || encoded[1] > 1 {
         return Err(CollectionError::CorruptMetadata);
     }
@@ -731,29 +738,14 @@ mod tests {
             .unwrap();
         store.define_index(b"users", &unique_email()).unwrap();
         store
-            .upsert_record(
-                b"users",
-                b"u1",
-                b"A",
-                &[email(b"old@example.com")],
-            )
+            .upsert_record(b"users", b"u1", b"A", &[email(b"old@example.com")])
             .unwrap();
 
         let mut tx = store.begin().unwrap();
-        tx.upsert_record(
-            b"users",
-            b"u1",
-            b"A2",
-            &[email(b"new@example.com")],
-        )
-        .unwrap();
-        tx.upsert_record(
-            b"users",
-            b"u2",
-            b"B",
-            &[email(b"old@example.com")],
-        )
-        .unwrap();
+        tx.upsert_record(b"users", b"u1", b"A2", &[email(b"new@example.com")])
+            .unwrap();
+        tx.upsert_record(b"users", b"u2", b"B", &[email(b"old@example.com")])
+            .unwrap();
         tx.commit().unwrap();
 
         assert_eq!(
