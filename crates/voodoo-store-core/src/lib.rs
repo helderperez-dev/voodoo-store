@@ -31,9 +31,7 @@ pub use collection::{
 };
 pub use compaction::CompactionReport;
 pub use cron::{CronError, CronExpression};
-pub use cron_scheduler::{
-    CronScheduleId, CronSchedulerError, CronTickReport, DurableCronSchedule,
-};
+pub use cron_scheduler::{CronScheduleId, CronSchedulerError, CronTickReport, DurableCronSchedule};
 pub use engine::{Durability, EngineError, Store, StoreOptions, Transaction, VerificationReport};
 pub use header::{FORMAT_MAJOR, FORMAT_MINOR, HeaderError, STORE_HEADER_LEN, StoreHeader};
 pub use jobs::{
