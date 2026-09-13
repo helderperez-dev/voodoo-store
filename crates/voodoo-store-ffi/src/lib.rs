@@ -84,7 +84,7 @@ pub unsafe extern "C" fn vds_put(
     };
 
     let result = (|| {
-        let mut tx = handle.store.begin();
+        let mut tx = handle.store.begin()?;
         tx.put(key, value)?;
         tx.commit()
     })();
@@ -114,7 +114,7 @@ pub unsafe extern "C" fn vds_delete(
     };
 
     let result = (|| {
-        let mut tx = handle.store.begin();
+        let mut tx = handle.store.begin()?;
         tx.delete(key)?;
         tx.commit()
     })();
