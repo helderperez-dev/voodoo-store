@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/voodoo-store-core",
+    "crates/voodoo-store-ffi",
 ]
 resolver = "2"
 
