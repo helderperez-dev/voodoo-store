@@ -58,7 +58,9 @@ impl Store {
         let key = key.as_ref();
         let current = match self.get(key) {
             Some(bytes) => {
-                let encoded: [u8; 8] = bytes.try_into().map_err(|_| AtomicError::InvalidCounter)?;
+                let encoded: [u8; 8] = bytes
+                    .try_into()
+                    .map_err(|_| AtomicError::InvalidCounter)?;
                 i64::from_le_bytes(encoded)
             }
             None => 0,
