@@ -1,0 +1,15 @@
+[workspace]
+members = [
+    "crates/voodoo-store-core",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/helderperez-dev/voodoo-store"
+rust-version = "1.85"
+
+[workspace.dependencies]
+crc32fast = "1.4"
+thiserror = "2"
