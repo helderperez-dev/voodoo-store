@@ -78,17 +78,20 @@ mod tests {
         let snapshot = temp_path("copy");
         let source_store_id;
         let snapshot_store_id;
+        let expected_changes;
         {
             let mut store = Store::open(&source).unwrap();
             source_store_id = store.header().store_id;
             store.put(b"a", b"one").unwrap();
             store.put(b"b", b"two").unwrap();
             store.put(b"a", b"three").unwrap();
+            let expected_keys = store.len();
+            expected_changes = store.changes_after(None, usize::MAX).unwrap();
             let report = store.snapshot_to(&snapshot).unwrap();
             snapshot_store_id = report.snapshot_store_id;
             assert_eq!(report.source_store_id, source_store_id);
             assert_ne!(report.snapshot_store_id, source_store_id);
-            assert_eq!(report.keys, 2);
+            assert_eq!(report.keys, expected_keys);
             assert!(report.snapshot_bytes <= report.source_bytes);
         }
         {
@@ -96,6 +99,7 @@ mod tests {
             assert_eq!(restored.header().store_id, snapshot_store_id);
             assert_eq!(restored.get(b"a"), Some(b"three".as_slice()));
             assert_eq!(restored.get(b"b"), Some(b"two".as_slice()));
+            assert_eq!(restored.changes_after(None, usize::MAX).unwrap(), expected_changes);
         }
         let _ = fs::remove_file(source);
         let _ = fs::remove_file(snapshot);
