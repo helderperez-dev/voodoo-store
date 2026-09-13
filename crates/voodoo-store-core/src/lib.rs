@@ -11,9 +11,7 @@ pub mod log;
 pub mod model;
 pub mod queue;
 
-pub use engine::{
-    Durability, EngineError, Store, StoreOptions, Transaction, VerificationReport,
-};
+pub use engine::{Durability, EngineError, Store, StoreOptions, Transaction, VerificationReport};
 pub use header::{FORMAT_MAJOR, FORMAT_MINOR, HeaderError, STORE_HEADER_LEN, StoreHeader};
 pub use log::{LogRecord, RecordKind, StoreError};
 pub use model::{
