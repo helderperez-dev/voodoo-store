@@ -194,10 +194,7 @@ impl Store {
         tx.commit()
     }
 
-    pub(crate) fn delete_internal(
-        &mut self,
-        key: impl AsRef<[u8]>,
-    ) -> Result<(), EngineError> {
+    pub(crate) fn delete_internal(&mut self, key: impl AsRef<[u8]>) -> Result<(), EngineError> {
         let mut tx = self.begin()?;
         tx.delete_internal(key)?;
         tx.commit()
@@ -292,10 +289,7 @@ impl Transaction<'_> {
         self.delete_internal(key)
     }
 
-    pub(crate) fn delete_internal(
-        &mut self,
-        key: impl AsRef<[u8]>,
-    ) -> Result<(), EngineError> {
+    pub(crate) fn delete_internal(&mut self, key: impl AsRef<[u8]>) -> Result<(), EngineError> {
         self.ensure_open()?;
         let key = key.as_ref().to_vec();
         self.store
