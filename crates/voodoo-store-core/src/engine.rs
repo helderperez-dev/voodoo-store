@@ -342,6 +342,22 @@ impl Transaction<'_> {
         Ok(())
     }
 
+    /// Reads a key through the transaction's staged view. The most recent
+    /// staged mutation wins; otherwise the committed Store value is returned.
+    pub(crate) fn get_internal(&self, key: impl AsRef<[u8]>) -> Option<&[u8]> {
+        let key = key.as_ref();
+        for operation in self.operations.iter().rev() {
+            match operation {
+                Operation::Put(staged_key, value) if staged_key.as_slice() == key => {
+                    return Some(value.as_slice());
+                }
+                Operation::Delete(staged_key) if staged_key.as_slice() == key => return None,
+                _ => {}
+            }
+        }
+        self.store.get(key)
+    }
+
     pub fn commit(mut self) -> Result<(), EngineError> {
         self.ensure_open()?;
         self.store
@@ -830,6 +846,22 @@ mod tests {
         }
         let store = Store::open(&path).unwrap();
         assert_eq!(store.get(b"a"), None);
+        drop(store);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn transaction_reads_its_staged_view() {
+        let path = temp_store_path("staged-view");
+        let mut store = Store::open(&path).unwrap();
+        store.put(b"existing", b"old").unwrap();
+        let mut tx = store.begin().unwrap();
+        assert_eq!(tx.get_internal(b"existing"), Some(b"old".as_slice()));
+        tx.put(b"existing", b"new").unwrap();
+        assert_eq!(tx.get_internal(b"existing"), Some(b"new".as_slice()));
+        tx.delete(b"existing").unwrap();
+        assert_eq!(tx.get_internal(b"existing"), None);
+        tx.rollback().unwrap();
         drop(store);
         let _ = fs::remove_file(path);
     }
