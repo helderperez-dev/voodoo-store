@@ -1,13 +1,56 @@
-use std::collections::HashMap;
-use std::fs::{File, OpenOptions};
+use std::collections::{HashMap, HashSet};
+use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use fs2::FileExt;
 use thiserror::Error;
 
 use crate::header::{HeaderError, STORE_HEADER_LEN, StoreHeader};
 use crate::log::{HEADER_LEN, LogRecord, RecordKind, StoreError, encoded_record_len_from_prefix};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Durability {
+    /// Synchronize file data and metadata on every commit.
+    Strict,
+    /// Synchronize file data on every commit. This is the default.
+    Data,
+    /// Rely on the operating system to flush dirty pages later.
+    Relaxed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StoreOptions {
+    pub durability: Durability,
+    pub repair_torn_tail: bool,
+}
+
+impl Default for StoreOptions {
+    fn default() -> Self {
+        Self {
+            durability: Durability::Data,
+            repair_torn_tail: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerificationReport {
+    pub header: StoreHeader,
+    pub file_bytes: u64,
+    pub valid_bytes: u64,
+    pub records: u64,
+    pub committed_transactions: u64,
+    pub pending_transactions: u64,
+    pub keys: usize,
+}
+
+impl VerificationReport {
+    pub const fn has_torn_tail(&self) -> bool {
+        self.valid_bytes < self.file_bytes
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Operation {
@@ -20,6 +63,7 @@ pub struct Store {
     path: PathBuf,
     file: File,
     header: StoreHeader,
+    options: StoreOptions,
     state: HashMap<Vec<u8>, Vec<u8>>,
     next_tx_id: u64,
     next_sequence: u64,
@@ -27,6 +71,13 @@ pub struct Store {
 
 impl Store {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, EngineError> {
+        Self::open_with_options(path, StoreOptions::default())
+    }
+
+    pub fn open_with_options(
+        path: impl AsRef<Path>,
+        options: StoreOptions,
+    ) -> Result<Self, EngineError> {
         let path = path.as_ref().to_path_buf();
         let mut file = OpenOptions::new()
             .create(true)
@@ -34,15 +85,15 @@ impl Store {
             .write(true)
             .open(&path)?;
 
+        file.try_lock_exclusive().map_err(map_lock_error)?;
+
         let header = load_or_initialize_header(&mut file)?;
         let recovery = recover(&mut file)?;
 
-        // A torn final record is a valid crash artifact. Repair the physical
-        // tail before accepting new appends so corruption never accumulates.
         let physical_len = file.metadata()?.len();
-        if recovery.valid_end < physical_len {
+        if recovery.valid_end < physical_len && options.repair_torn_tail {
             file.set_len(recovery.valid_end)?;
-            file.sync_data()?;
+            sync_file(&file, options.durability)?;
         }
         file.seek(SeekFrom::End(0))?;
 
@@ -50,9 +101,31 @@ impl Store {
             path,
             file,
             header,
+            options,
             state: recovery.state,
             next_tx_id: next_counter(recovery.max_tx_id)?,
             next_sequence: next_counter(recovery.max_sequence)?,
+        })
+    }
+
+    pub fn verify(path: impl AsRef<Path>) -> Result<VerificationReport, EngineError> {
+        let mut file = OpenOptions::new().read(true).open(path)?;
+        file.try_lock_shared().map_err(map_lock_error)?;
+
+        let mut header_bytes = [0u8; STORE_HEADER_LEN];
+        file.read_exact(&mut header_bytes)?;
+        let header = StoreHeader::decode(&header_bytes)?;
+        let file_bytes = file.metadata()?.len();
+        let recovery = recover(&mut file)?;
+
+        Ok(VerificationReport {
+            header,
+            file_bytes,
+            valid_bytes: recovery.valid_end,
+            records: recovery.records,
+            committed_transactions: recovery.committed_transactions,
+            pending_transactions: recovery.pending_transactions,
+            keys: recovery.state.len(),
         })
     }
 
@@ -62,6 +135,10 @@ impl Store {
 
     pub const fn header(&self) -> &StoreHeader {
         &self.header
+    }
+
+    pub const fn options(&self) -> StoreOptions {
+        self.options
     }
 
     pub fn get(&self, key: impl AsRef<[u8]>) -> Option<&[u8]> {
@@ -78,6 +155,47 @@ impl Store {
 
     pub fn is_empty(&self) -> bool {
         self.state.is_empty()
+    }
+
+    pub fn scan_prefix(&self, prefix: impl AsRef<[u8]>) -> Vec<(Vec<u8>, Vec<u8>)> {
+        let prefix = prefix.as_ref();
+        let mut entries: Vec<_> = self
+            .state
+            .iter()
+            .filter(|(key, _)| key.starts_with(prefix))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+        entries.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+        entries
+    }
+
+    pub fn put(
+        &mut self,
+        key: impl AsRef<[u8]>,
+        value: impl AsRef<[u8]>,
+    ) -> Result<(), EngineError> {
+        let mut tx = self.begin()?;
+        tx.put(key, value)?;
+        tx.commit()
+    }
+
+    pub fn delete(&mut self, key: impl AsRef<[u8]>) -> Result<(), EngineError> {
+        let mut tx = self.begin()?;
+        tx.delete(key)?;
+        tx.commit()
+    }
+
+    pub fn flush(&self) -> Result<(), EngineError> {
+        sync_file(&self.file, self.options.durability)
+    }
+
+    pub fn backup_to(&self, destination: impl AsRef<Path>) -> Result<u64, EngineError> {
+        self.file.sync_all()?;
+        let destination = destination.as_ref();
+        if destination == self.path {
+            return Err(EngineError::BackupDestinationIsSource);
+        }
+        Ok(fs::copy(&self.path, destination)?)
     }
 
     pub fn begin(&mut self) -> Result<Transaction<'_>, EngineError> {
@@ -106,6 +224,12 @@ impl Store {
         self.file.seek(SeekFrom::End(0))?;
         self.file.write_all(&bytes)?;
         Ok(())
+    }
+}
+
+impl Drop for Store {
+    fn drop(&mut self) {
+        let _ = FileExt::unlock(&self.file);
     }
 }
 
@@ -148,7 +272,7 @@ impl Transaction<'_> {
         self.ensure_open()?;
         self.store
             .append(RecordKind::Commit, self.tx_id, Vec::new())?;
-        self.store.file.sync_data()?;
+        sync_file(&self.store.file, self.store.options.durability)?;
         apply_operations(&mut self.store.state, &self.operations);
         self.finished = true;
         Ok(())
@@ -156,8 +280,6 @@ impl Transaction<'_> {
 
     pub fn rollback(mut self) -> Result<(), EngineError> {
         self.ensure_open()?;
-        // There is intentionally no rollback record in v0.1. Operations already
-        // appended to the log remain uncommitted and are ignored during recovery.
         self.finished = true;
         Ok(())
     }
@@ -177,6 +299,9 @@ struct Recovery {
     max_tx_id: u64,
     max_sequence: u64,
     valid_end: u64,
+    records: u64,
+    committed_transactions: u64,
+    pending_transactions: u64,
 }
 
 fn load_or_initialize_header(file: &mut File) -> Result<StoreHeader, EngineError> {
@@ -206,10 +331,11 @@ fn recover(file: &mut File) -> Result<Recovery, EngineError> {
 
     let mut state = HashMap::new();
     let mut pending: HashMap<u64, Vec<Operation>> = HashMap::new();
-    let mut committed = std::collections::HashSet::new();
+    let mut committed = HashSet::new();
     let mut offset = 0usize;
     let mut max_tx_id = 0u64;
     let mut max_sequence = 0u64;
+    let mut records = 0u64;
 
     while offset < bytes.len() {
         let remaining = &bytes[offset..];
@@ -239,6 +365,7 @@ fn recover(file: &mut File) -> Result<Recovery, EngineError> {
 
         max_sequence = record.sequence;
         max_tx_id = max_tx_id.max(record.tx_id);
+        records = records.checked_add(1).ok_or(EngineError::CounterExhausted)?;
 
         match record.kind {
             RecordKind::Put => pending
@@ -265,7 +392,27 @@ fn recover(file: &mut File) -> Result<Recovery, EngineError> {
         max_tx_id,
         max_sequence,
         valid_end: STORE_HEADER_LEN as u64 + offset as u64,
+        records,
+        committed_transactions: committed.len() as u64,
+        pending_transactions: pending.len() as u64,
     })
+}
+
+fn sync_file(file: &File, durability: Durability) -> Result<(), EngineError> {
+    match durability {
+        Durability::Strict => file.sync_all()?,
+        Durability::Data => file.sync_data()?,
+        Durability::Relaxed => {}
+    }
+    Ok(())
+}
+
+fn map_lock_error(error: std::io::Error) -> EngineError {
+    if error.kind() == std::io::ErrorKind::WouldBlock {
+        EngineError::AlreadyOpen
+    } else {
+        EngineError::Io(error)
+    }
 }
 
 fn next_counter(max: u64) -> Result<u64, EngineError> {
@@ -284,9 +431,6 @@ fn unix_time_ms() -> Result<i64, EngineError> {
 }
 
 fn generate_store_id() -> [u8; 16] {
-    // This is a persistent uniqueness token, not a cryptographic secret. Avoiding
-    // a runtime RNG dependency keeps the core small; replication can later define
-    // stronger identity-generation requirements without changing the header width.
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|value| value.as_nanos())
@@ -361,6 +505,8 @@ pub enum EngineError {
     Header(#[from] HeaderError),
     #[error("log error: {0}")]
     Log(#[from] StoreError),
+    #[error("store is already open by another writer")]
+    AlreadyOpen,
     #[error("key is too large")]
     KeyTooLarge,
     #[error("invalid operation payload")]
@@ -373,6 +519,8 @@ pub enum EngineError {
     ClockBeforeUnixEpoch,
     #[error("system timestamp does not fit the store format")]
     TimestampOverflow,
+    #[error("backup destination must differ from source store")]
+    BackupDestinationIsSource,
     #[error("non-monotonic log sequence: previous {previous}, current {current}")]
     NonMonotonicSequence { previous: u64, current: u64 },
     #[error("log contains a record after transaction {0} was committed")]
@@ -399,6 +547,31 @@ mod tests {
         let first_id = Store::open(&path).unwrap().header().store_id;
         let second_id = Store::open(&path).unwrap().header().store_id;
         assert_eq!(first_id, second_id);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn second_writer_is_rejected() {
+        let path = temp_store_path("lock");
+        let first = Store::open(&path).unwrap();
+        assert!(matches!(Store::open(&path), Err(EngineError::AlreadyOpen)));
+        drop(first);
+        assert!(Store::open(&path).is_ok());
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn autocommit_and_prefix_scan_work() {
+        let path = temp_store_path("autocommit");
+        let mut store = Store::open(&path).unwrap();
+        store.put(b"user:2", b"B").unwrap();
+        store.put(b"user:1", b"A").unwrap();
+        store.put(b"other", b"X").unwrap();
+
+        let entries = store.scan_prefix(b"user:");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0], (b"user:1".to_vec(), b"A".to_vec()));
+        assert_eq!(entries[1], (b"user:2".to_vec(), b"B".to_vec()));
         let _ = fs::remove_file(path);
     }
 
@@ -440,9 +613,7 @@ mod tests {
         let path = temp_store_path("torn-tail");
         {
             let mut store = Store::open(&path).unwrap();
-            let mut tx = store.begin().unwrap();
-            tx.put(b"safe", b"value").unwrap();
-            tx.commit().unwrap();
+            store.put(b"safe", b"value").unwrap();
         }
         let valid_len = fs::metadata(&path).unwrap().len();
         {
@@ -457,17 +628,43 @@ mod tests {
     }
 
     #[test]
+    fn verify_reports_valid_store() {
+        let path = temp_store_path("verify");
+        {
+            let mut store = Store::open(&path).unwrap();
+            store.put(b"a", b"1").unwrap();
+            store.put(b"b", b"2").unwrap();
+        }
+        let report = Store::verify(&path).unwrap();
+        assert_eq!(report.keys, 2);
+        assert_eq!(report.committed_transactions, 2);
+        assert!(!report.has_torn_tail());
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn backup_is_reopenable() {
+        let path = temp_store_path("backup-source");
+        let backup = temp_store_path("backup-target");
+        {
+            let mut store = Store::open(&path).unwrap();
+            store.put(b"durable", b"yes").unwrap();
+            store.backup_to(&backup).unwrap();
+        }
+        let copy = Store::open(&backup).unwrap();
+        assert_eq!(copy.get(b"durable"), Some(b"yes".as_slice()));
+        drop(copy);
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_file(backup);
+    }
+
+    #[test]
     fn delete_is_transactional_and_durable() {
         let path = temp_store_path("delete");
         {
             let mut store = Store::open(&path).unwrap();
-            let mut tx = store.begin().unwrap();
-            tx.put(b"key", b"value").unwrap();
-            tx.commit().unwrap();
-
-            let mut tx = store.begin().unwrap();
-            tx.delete(b"key").unwrap();
-            tx.commit().unwrap();
+            store.put(b"key", b"value").unwrap();
+            store.delete(b"key").unwrap();
             assert_eq!(store.get(b"key"), None);
         }
         let store = Store::open(&path).unwrap();
