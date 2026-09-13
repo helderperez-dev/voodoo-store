@@ -99,7 +99,10 @@ mod tests {
             assert_eq!(restored.header().store_id, snapshot_store_id);
             assert_eq!(restored.get(b"a"), Some(b"three".as_slice()));
             assert_eq!(restored.get(b"b"), Some(b"two".as_slice()));
-            assert_eq!(restored.changes_after(None, usize::MAX).unwrap(), expected_changes);
+            assert_eq!(
+                restored.changes_after(None, usize::MAX).unwrap(),
+                expected_changes
+            );
         }
         let _ = fs::remove_file(source);
         let _ = fs::remove_file(snapshot);
