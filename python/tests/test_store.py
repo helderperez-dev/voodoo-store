@@ -47,6 +47,57 @@ def test_transaction_commit_and_rollback(tmp_path: Path) -> None:
         assert store.get(b"ghost") is None
 
 
+def test_transaction_reads_own_staged_mutations(tmp_path: Path) -> None:
+    path = tmp_path / "transaction-view.vstore"
+    with Store.open(path) as store:
+        store.put(b"user:1", b"old")
+        store.put(b"user:2", b"keep")
+        store.put(b"user:3", b"remove")
+        store.put(b"other:1", b"ignored")
+
+        with store.transaction() as tx:
+            assert tx.get(b"user:1") == b"old"
+            assert tx.contains(b"user:3") is True
+
+            tx.put(b"user:1", b"new")
+            tx.put(b"user:4", b"created")
+            tx.delete(b"user:3")
+
+            assert tx.get(b"user:1") == b"new"
+            assert tx.get(b"user:4") == b"created"
+            assert tx.get(b"user:3") is None
+            assert tx.contains(b"user:4") is True
+            assert tx.contains(b"user:3") is False
+            assert tx.scan_prefix(b"user:") == [
+                (b"user:1", b"new"),
+                (b"user:2", b"keep"),
+                (b"user:4", b"created"),
+            ]
+
+        assert store.get(b"user:1") == b"new"
+        assert store.get(b"user:3") is None
+        assert store.get(b"user:4") == b"created"
+
+
+def test_transaction_latest_staged_mutation_wins(tmp_path: Path) -> None:
+    path = tmp_path / "transaction-order.vstore"
+    with Store.open(path) as store:
+        store.put(b"item", b"committed")
+        tx = store.transaction()
+
+        tx.delete(b"item")
+        assert tx.get(b"item") is None
+
+        tx.put(b"item", b"restored")
+        assert tx.get(b"item") == b"restored"
+
+        tx.put(b"item", b"latest")
+        assert tx.get(b"item") == b"latest"
+
+        tx.rollback()
+        assert store.get(b"item") == b"committed"
+
+
 def test_store_is_exclusive_during_transaction(tmp_path: Path) -> None:
     path = tmp_path / "exclusive.vstore"
     with Store.open(path) as store:
@@ -67,6 +118,12 @@ def test_finished_transaction_is_unusable(tmp_path: Path) -> None:
         tx.commit()
         with pytest.raises(TransactionFinishedError):
             tx.put(b"b", b"2")
+        with pytest.raises(TransactionFinishedError):
+            tx.get(b"a")
+        with pytest.raises(TransactionFinishedError):
+            tx.contains(b"a")
+        with pytest.raises(TransactionFinishedError):
+            tx.scan_prefix(b"")
 
 
 def test_reserved_namespace_is_rejected(tmp_path: Path) -> None:
