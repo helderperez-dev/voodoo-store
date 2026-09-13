@@ -433,6 +433,39 @@ impl Store {
     }
 }
 
+pub(crate) fn enqueue_job_tx(
+    tx: &mut crate::Transaction<'_>,
+    spec: JobSpec,
+    now_ms: i64,
+    detail: &[u8],
+) -> Result<JobId, JobError> {
+    validate_job_spec(&spec)?;
+    if let Some(key) = spec.idempotency_key.as_deref() {
+        for (_, encoded) in tx.scan_prefix_internal(JOB_PREFIX) {
+            let job = decode_job(&encoded)?;
+            if job.idempotency_key.as_deref() == Some(key) {
+                return Ok(job.id);
+            }
+        }
+    }
+
+    let job = build_job(spec)?;
+    let id = job.id;
+    tx.put_internal(job_key(&id), encode_job(&job)?)?;
+    append_history_tx(
+        tx,
+        &id,
+        0,
+        JobHistoryEntry {
+            sequence: 0,
+            at_ms: now_ms,
+            kind: JobHistoryKind::Submitted,
+            detail: detail.to_vec(),
+        },
+    )?;
+    Ok(id)
+}
+
 fn validate_job_spec(spec: &JobSpec) -> Result<(), JobError> {
     if spec.handler.is_empty() {
         return Err(JobError::EmptyHandler);
