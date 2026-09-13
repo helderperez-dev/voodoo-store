@@ -68,7 +68,9 @@ struct ProcessWriterGuard {
 impl ProcessWriterGuard {
     fn acquire(path: &Path) -> Result<Self, EngineError> {
         let path = fs::canonicalize(path)?;
-        let mut writers = open_writers().lock().unwrap_or_else(|error| error.into_inner());
+        let mut writers = open_writers()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         if !writers.insert(path.clone()) {
             return Err(EngineError::AlreadyOpen);
         }
@@ -79,7 +81,9 @@ impl ProcessWriterGuard {
 
 impl Drop for ProcessWriterGuard {
     fn drop(&mut self) {
-        let mut writers = open_writers().lock().unwrap_or_else(|error| error.into_inner());
+        let mut writers = open_writers()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         writers.remove(&self.path);
     }
 }
