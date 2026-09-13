@@ -368,6 +368,31 @@ impl Transaction<'_> {
         self.store.get(key)
     }
 
+    /// Scans a prefix through the transaction's staged view. Committed entries
+    /// are overlaid by staged puts/deletes in operation order before sorting.
+    pub(crate) fn scan_prefix_internal(
+        &self,
+        prefix: impl AsRef<[u8]>,
+    ) -> Vec<(Vec<u8>, Vec<u8>)> {
+        let prefix = prefix.as_ref();
+        let mut entries: HashMap<Vec<u8>, Vec<u8>> =
+            self.store.scan_prefix(prefix).into_iter().collect();
+        for operation in &self.operations {
+            match operation {
+                Operation::Put(key, value) if key.starts_with(prefix) => {
+                    entries.insert(key.clone(), value.clone());
+                }
+                Operation::Delete(key) if key.starts_with(prefix) => {
+                    entries.remove(key);
+                }
+                _ => {}
+            }
+        }
+        let mut entries: Vec<_> = entries.into_iter().collect();
+        entries.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+        entries
+    }
+
     pub fn commit(mut self) -> Result<(), EngineError> {
         self.ensure_open()?;
         if self.emit_cdc {
@@ -875,6 +900,28 @@ mod tests {
         assert_eq!(tx.get_internal(b"existing"), Some(b"new".as_slice()));
         tx.delete(b"existing").unwrap();
         assert_eq!(tx.get_internal(b"existing"), None);
+        tx.rollback().unwrap();
+        drop(store);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn transaction_prefix_scan_overlays_staged_mutations() {
+        let path = temp_store_path("staged-prefix");
+        let mut store = Store::open(&path).unwrap();
+        store.put(b"users:1", b"Ada").unwrap();
+        store.put(b"users:2", b"Grace").unwrap();
+        let mut tx = store.begin().unwrap();
+        tx.put(b"users:1", b"Ada Lovelace").unwrap();
+        tx.delete(b"users:2").unwrap();
+        tx.put(b"users:3", b"Linus").unwrap();
+        assert_eq!(
+            tx.scan_prefix_internal(b"users:"),
+            vec![
+                (b"users:1".to_vec(), b"Ada Lovelace".to_vec()),
+                (b"users:3".to_vec(), b"Linus".to_vec()),
+            ]
+        );
         tx.rollback().unwrap();
         drop(store);
         let _ = fs::remove_file(path);
