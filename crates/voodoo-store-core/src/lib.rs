@@ -22,6 +22,7 @@ pub mod operations;
 pub mod outbox;
 pub mod queue;
 pub mod restore;
+pub mod rpc;
 pub mod snapshot;
 pub mod transactional;
 pub mod triggers;
@@ -54,6 +55,7 @@ pub use operations::{HealthReport, NamespaceStats, OperationsError, StorageStats
 pub use outbox::{OutboxError, OutboxEvent, OutboxEventId};
 pub use queue::{PushOptions, Queue, QueueError, QueueMessage, QueueState, QueueStats};
 pub use restore::RestoreReport;
+pub use rpc::{RpcError, RpcExpireReport, RpcRequest, RpcRequestId, RpcResponse};
 pub use snapshot::{SnapshotError, SnapshotReport};
 pub use transactional::TransactionalError;
 pub use triggers::{DurableTrigger, TriggerError, TriggerId, TriggerSource};
