@@ -274,7 +274,8 @@ fn encode_state(state: &ConsumerGroupState) -> Result<Vec<u8>, ConsumerGroupErro
     }
     out.extend_from_slice(&state.lease_until_ms.to_le_bytes());
     out.extend_from_slice(&state.lease_generation.to_le_bytes());
-    let owner_len = u32::try_from(state.owner.len()).map_err(|_| ConsumerGroupError::CorruptRecord)?;
+    let owner_len =
+        u32::try_from(state.owner.len()).map_err(|_| ConsumerGroupError::CorruptRecord)?;
     out.extend_from_slice(&owner_len.to_le_bytes());
     out.extend_from_slice(&state.owner);
     Ok(out)
@@ -321,7 +322,9 @@ fn read_u8(bytes: &[u8], pos: &mut usize) -> Result<u8, ConsumerGroupError> {
 }
 
 fn read_u32(bytes: &[u8], pos: &mut usize) -> Result<u32, ConsumerGroupError> {
-    let end = pos.checked_add(4).ok_or(ConsumerGroupError::CorruptRecord)?;
+    let end = pos
+        .checked_add(4)
+        .ok_or(ConsumerGroupError::CorruptRecord)?;
     let value = bytes
         .get(*pos..end)
         .ok_or(ConsumerGroupError::CorruptRecord)?;
@@ -334,7 +337,9 @@ fn read_u32(bytes: &[u8], pos: &mut usize) -> Result<u32, ConsumerGroupError> {
 }
 
 fn read_u64(bytes: &[u8], pos: &mut usize) -> Result<u64, ConsumerGroupError> {
-    let end = pos.checked_add(8).ok_or(ConsumerGroupError::CorruptRecord)?;
+    let end = pos
+        .checked_add(8)
+        .ok_or(ConsumerGroupError::CorruptRecord)?;
     let value = bytes
         .get(*pos..end)
         .ok_or(ConsumerGroupError::CorruptRecord)?;
@@ -347,7 +352,9 @@ fn read_u64(bytes: &[u8], pos: &mut usize) -> Result<u64, ConsumerGroupError> {
 }
 
 fn read_i64(bytes: &[u8], pos: &mut usize) -> Result<i64, ConsumerGroupError> {
-    let end = pos.checked_add(8).ok_or(ConsumerGroupError::CorruptRecord)?;
+    let end = pos
+        .checked_add(8)
+        .ok_or(ConsumerGroupError::CorruptRecord)?;
     let value = bytes
         .get(*pos..end)
         .ok_or(ConsumerGroupError::CorruptRecord)?;
@@ -442,8 +449,7 @@ mod tests {
                 first.entry.offset,
                 first.lease_generation,
             ),
-            Err(ConsumerGroupError::OwnerMismatch)
-                | Err(ConsumerGroupError::LeaseMismatch { .. })
+            Err(ConsumerGroupError::OwnerMismatch) | Err(ConsumerGroupError::LeaseMismatch { .. })
         ));
         store
             .consumer_group_ack(
