@@ -121,7 +121,10 @@ mod tests {
             assert!(report.bytes_reclaimed() > 0);
 
             let compacted = Store::open(&destination).unwrap();
-            assert_eq!(compacted.changes_after(None, usize::MAX).unwrap(), expected_changes);
+            assert_eq!(
+                compacted.changes_after(None, usize::MAX).unwrap(),
+                expected_changes
+            );
         }
 
         let compacted = Store::open(&destination).unwrap();
