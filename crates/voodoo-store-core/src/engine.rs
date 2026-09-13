@@ -370,10 +370,7 @@ impl Transaction<'_> {
 
     /// Scans a prefix through the transaction's staged view. Committed entries
     /// are overlaid by staged puts/deletes in operation order before sorting.
-    pub(crate) fn scan_prefix_internal(
-        &self,
-        prefix: impl AsRef<[u8]>,
-    ) -> Vec<(Vec<u8>, Vec<u8>)> {
+    pub(crate) fn scan_prefix_internal(&self, prefix: impl AsRef<[u8]>) -> Vec<(Vec<u8>, Vec<u8>)> {
         let prefix = prefix.as_ref();
         let mut entries: HashMap<Vec<u8>, Vec<u8>> =
             self.store.scan_prefix(prefix).into_iter().collect();
