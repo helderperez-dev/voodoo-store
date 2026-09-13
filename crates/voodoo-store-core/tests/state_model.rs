@@ -97,8 +97,7 @@ fn deterministic_transaction_model_survives_repeated_reopen() {
     let all_changes = reopened.changes_after(None, usize::MAX).unwrap();
     assert!(all_changes.windows(2).all(|window| {
         window[0].tx_id < window[1].tx_id
-            || (window[0].tx_id == window[1].tx_id
-                && window[0].sequence < window[1].sequence)
+            || (window[0].tx_id == window[1].tx_id && window[0].sequence < window[1].sequence)
     }));
     drop(reopened);
     let _ = fs::remove_file(path);
