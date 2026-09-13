@@ -13,6 +13,7 @@ pub mod header;
 pub mod log;
 pub mod messaging;
 pub mod model;
+pub mod objects;
 pub mod queue;
 pub mod restore;
 pub mod ttl;
@@ -29,6 +30,7 @@ pub use messaging::{MessagingError, Stream, StreamEntry, SubscriptionState, Topi
 pub use model::{
     DeliverySemantics, DestinationKind, JobState, MessageEnvelope, ScheduleKind, TraceContext,
 };
+pub use objects::{ObjectError, ObjectGcReport, ObjectId, ObjectInfo};
 pub use queue::{PushOptions, Queue, QueueError, QueueMessage, QueueState, QueueStats};
 pub use restore::RestoreReport;
 pub use ttl::{TtlError, TtlInfo, TtlSweepReport};
