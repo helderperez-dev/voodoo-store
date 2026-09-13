@@ -34,9 +34,7 @@ pub use collection::{
     CollectionDefinition, CollectionError, CollectionRecord, IndexDefinition, IndexValue,
 };
 pub use compaction::CompactionReport;
-pub use consumer_group::{
-    ConsumerGroupDelivery, ConsumerGroupError, ConsumerGroupState,
-};
+pub use consumer_group::{ConsumerGroupDelivery, ConsumerGroupError, ConsumerGroupState};
 pub use cron::{CronError, CronExpression};
 pub use cron_scheduler::{CronScheduleId, CronSchedulerError, CronTickReport, DurableCronSchedule};
 pub use engine::{Durability, EngineError, Store, StoreOptions, Transaction, VerificationReport};
