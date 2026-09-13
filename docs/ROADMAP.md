@@ -2,7 +2,7 @@
 
 The roadmap is intentionally bottom-up. Features that depend on durability, ordering, or transactions do not advance until the layer below has crash/fault coverage.
 
-## Current release target — v0.1 functional embedded application-state engine
+## Current release target — v0.1 usable single-node application-state engine
 
 Voodoo Store is already beyond a KV/queue prototype. The current single-node engine persists structured data, background work, scheduling, messaging, objects and workflow state in one `.vstore` without requiring external infrastructure.
 
@@ -21,17 +21,20 @@ Implemented today:
 - [x] collections with schema-version/codec metadata and secondary/unique indexes
 - [x] durable queues, jobs, one-shot/interval schedules and cron schedules
 - [x] durable triggers routing into Jobs
-- [x] topics, streams, durable subscriptions and replay
+- [x] topics, streams, durable subscriptions, replay and consumer groups
+- [x] durable request/reply correlation and RPC state
+- [x] transactional Outbox events
 - [x] content-addressed object storage with deduplication, verification and orphan GC
 - [x] durable workflow state with signals, timers, waits and history
 - [x] storage/namespace health accounting
-- [x] first typed cross-domain transaction primitive (`KV + Job` in one commit)
+- [x] typed cross-domain transaction primitives for application KV + Job + Outbox Event + RPC Request
 - [x] standalone CLI
 - [x] C ABI v2 foundation with transactions, errors and panic containment
 - [x] deterministic torn-write, corruption and process-crash tests
-- [x] Format + Clippy + Linux/macOS/Windows + Rust 1.85 CI
+- [x] Format + Clippy + Linux/macOS/Windows + Rust 1.85 CI baseline
+- [x] executable application-state example and adoption quickstart
 
-The remaining work moves this single-node engine from broad functional coverage toward a hardened 1.0 and later distributed operation.
+The remaining work moves this usable single-node development release toward a hardened 1.0 and later distributed operation.
 
 ## M0 — Durable log and recovery
 
@@ -121,7 +124,7 @@ Jobs and time:
 - [x] trigger definitions and trigger-to-job routing
 - [x] atomic job state + history transitions
 - [x] atomic one-shot/interval schedule fire + schedule advance
-- [x] first cross-domain transaction API: application KV mutation + Job enqueue in one commit
+- [x] application KV + Job enqueue in one transaction
 - [ ] remove duplicate Job wire encoding from transactional helper by centralizing internal codec
 - [ ] extend cross-domain transactions to Queue / Stream / Topic / Object references
 - [ ] trigger firing fully transactional with trigger metadata update
@@ -141,9 +144,10 @@ Goal: support decoupled communication, replay and live state.
 - [x] append-only streams
 - [x] stream offsets
 - [x] replay
-- [ ] consumer groups with ownership/leases
-- [ ] request/reply implementation
-- [ ] RPC correlation helpers
+- [x] consumer groups with ownership/leases, generation-based stale-ACK protection and redelivery
+- [x] durable request/reply implementation
+- [x] RPC correlation helpers and durable deadlines
+- [x] transactional Outbox events with explicit ACK
 - [ ] change data capture from committed transactions
 - [ ] change feeds
 - [ ] live-query invalidation/deltas
@@ -221,7 +225,7 @@ Planned surfaces:
 - [ ] Overview / health / storage
 - [ ] KV / Collections / Schema / Indexes
 - [ ] Queues / Jobs / Scheduler / Cron / Triggers
-- [ ] Topics / Streams / Subscriptions
+- [ ] Topics / Streams / Subscriptions / Consumer Groups / RPC / Outbox
 - [ ] Objects
 - [ ] Workflows / signals / timers / history
 - [ ] Backup / restore / compaction / snapshots
@@ -280,7 +284,8 @@ A normal single-node Voodoo application should be able to use the following with
 - [x] durable jobs
 - [x] delayed / recurring / cron scheduling
 - [x] triggers
-- [x] topics / streams / replay
+- [x] topics / streams / replay / consumer groups
+- [x] durable request/reply and transactional Outbox
 - [x] object/blob storage baseline
 - [x] durable HITL waiting state
 - [x] workflow persistence
