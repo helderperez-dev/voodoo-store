@@ -20,6 +20,7 @@ pub mod objects;
 pub mod operations;
 pub mod queue;
 pub mod restore;
+pub mod snapshot;
 pub mod triggers;
 pub mod ttl;
 pub mod workflow;
@@ -48,6 +49,7 @@ pub use objects::{ObjectError, ObjectGcReport, ObjectId, ObjectInfo};
 pub use operations::{HealthReport, NamespaceStats, OperationsError, StorageStats};
 pub use queue::{PushOptions, Queue, QueueError, QueueMessage, QueueState, QueueStats};
 pub use restore::RestoreReport;
+pub use snapshot::{SnapshotError, SnapshotReport};
 pub use triggers::{DurableTrigger, TriggerError, TriggerId, TriggerSource};
 pub use ttl::{TtlError, TtlInfo, TtlSweepReport};
 pub use workflow::{
