@@ -32,19 +32,10 @@ impl TryFrom<u8> for QueueState {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PushOptions {
     pub available_at_ms: i64,
     pub priority: i32,
-}
-
-impl Default for PushOptions {
-    fn default() -> Self {
-        Self {
-            available_at_ms: 0,
-            priority: 0,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -193,9 +184,7 @@ impl<'a> Queue<'a> {
             .ok_or(QueueError::AttemptExhausted)?;
         message.state = QueueState::Leased;
         message.lease_until_ms = lease_until_ms;
-
-        let encoded = encode_message(&message)?;
-        self.store.put(key, encoded)?;
+        self.store.put(&key, encode_message(&message)?)?;
 
         Ok(Some(QueueMessage {
             id: message.id,
@@ -278,11 +267,9 @@ impl<'a> Queue<'a> {
                 keys.push(key);
             }
         }
-
         if keys.is_empty() {
             return Ok(0);
         }
-
         let count = u64::try_from(keys.len()).map_err(|_| QueueError::CountOverflow)?;
         let mut tx = self.store.begin()?;
         for key in keys {
@@ -478,47 +465,48 @@ mod tests {
     #[test]
     fn delayed_and_priority_delivery_work() {
         let path = temp_store_path("priority");
-        let mut store = Store::open(&path).unwrap();
-        let mut queue = store.queue(b"jobs").unwrap();
-        queue.push(b"normal").unwrap();
-        queue
-            .push_with_options(
-                b"urgent",
-                PushOptions {
-                    available_at_ms: 0,
-                    priority: 10,
-                },
-            )
-            .unwrap();
-        queue.push_at(b"later", 5_000).unwrap();
-
-        let first = queue.claim(100, 1_000).unwrap().unwrap();
-        assert_eq!(first.payload, b"urgent");
-        queue.ack(first.id, first.lease_generation).unwrap();
-
-        let second = queue.claim(100, 1_000).unwrap().unwrap();
-        assert_eq!(second.payload, b"normal");
-        queue.ack(second.id, second.lease_generation).unwrap();
-        assert!(queue.claim(100, 1_000).unwrap().is_none());
-        assert!(queue.claim(5_000, 1_000).unwrap().is_some());
+        {
+            let mut store = Store::open(&path).unwrap();
+            let mut queue = store.queue(b"jobs").unwrap();
+            queue.push(b"normal").unwrap();
+            queue
+                .push_with_options(
+                    b"urgent",
+                    PushOptions {
+                        available_at_ms: 0,
+                        priority: 10,
+                    },
+                )
+                .unwrap();
+            queue.push_at(b"later", 5_000).unwrap();
+            let first = queue.claim(100, 1_000).unwrap().unwrap();
+            assert_eq!(first.payload, b"urgent");
+            queue.ack(first.id, first.lease_generation).unwrap();
+            let second = queue.claim(100, 1_000).unwrap().unwrap();
+            assert_eq!(second.payload, b"normal");
+            queue.ack(second.id, second.lease_generation).unwrap();
+            assert!(queue.claim(100, 1_000).unwrap().is_none());
+            assert!(queue.claim(5_000, 1_000).unwrap().is_some());
+        }
         let _ = fs::remove_file(path);
     }
 
     #[test]
     fn expired_lease_can_be_reclaimed_and_stale_ack_is_rejected() {
         let path = temp_store_path("lease");
-        let mut store = Store::open(&path).unwrap();
-        let mut queue = store.queue(b"jobs").unwrap();
-        queue.push(b"work").unwrap();
-
-        let first = queue.claim(0, 100).unwrap().unwrap();
-        let second = queue.claim(101, 100).unwrap().unwrap();
-        assert_eq!(first.id, second.id);
-        assert!(matches!(
-            queue.ack(first.id, first.lease_generation),
-            Err(QueueError::LeaseMismatch { .. })
-        ));
-        queue.ack(second.id, second.lease_generation).unwrap();
+        {
+            let mut store = Store::open(&path).unwrap();
+            let mut queue = store.queue(b"jobs").unwrap();
+            queue.push(b"work").unwrap();
+            let first = queue.claim(0, 100).unwrap().unwrap();
+            let second = queue.claim(101, 100).unwrap().unwrap();
+            assert_eq!(first.id, second.id);
+            assert!(matches!(
+                queue.ack(first.id, first.lease_generation),
+                Err(QueueError::LeaseMismatch { .. })
+            ));
+            queue.ack(second.id, second.lease_generation).unwrap();
+        }
         let _ = fs::remove_file(path);
     }
 
