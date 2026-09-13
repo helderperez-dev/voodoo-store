@@ -141,10 +141,7 @@ impl Store {
 fn validate_index_exists(store: &Store, collection: &[u8], index: &[u8]) -> Result<(), QueryError> {
     let key = component_key(INDEX_META_PREFIX, &[collection, index])?;
     let encoded = store.get(key).ok_or(QueryError::IndexNotFound)?;
-    if encoded.len() != 2
-        || encoded[0] != COLLECTION_FORMAT_VERSION
-        || encoded[1] > 1
-    {
+    if encoded.len() != 2 || encoded[0] != COLLECTION_FORMAT_VERSION || encoded[1] > 1 {
         return Err(QueryError::CorruptIndexMetadata);
     }
     Ok(())
@@ -188,9 +185,7 @@ fn decode_index_entry(prefix: &[u8], key: &[u8]) -> Result<(Vec<u8>, Vec<u8>), Q
 }
 
 fn read_component(input: &[u8], cursor: &mut usize) -> Result<Vec<u8>, QueryError> {
-    let len_end = cursor
-        .checked_add(4)
-        .ok_or(QueryError::CorruptIndexEntry)?;
+    let len_end = cursor.checked_add(4).ok_or(QueryError::CorruptIndexEntry)?;
     let len_bytes = input
         .get(*cursor..len_end)
         .ok_or(QueryError::CorruptIndexEntry)?;
@@ -292,7 +287,9 @@ mod tests {
             end: QueryBound::Excluded(b"040".to_vec()),
             ..IndexRangeQuery::default()
         };
-        let result = store.query_index_range(b"products", b"price", &query).unwrap();
+        let result = store
+            .query_index_range(b"products", b"price", &query)
+            .unwrap();
         assert_eq!(result.len(), 3);
         assert_eq!(result[0].record.primary_key, b"b");
         assert_eq!(result[1].record.primary_key, b"c");
@@ -308,7 +305,9 @@ mod tests {
         let query = IndexRangeQuery::between(b"010".to_vec(), b"040".to_vec())
             .with_order(QueryOrder::Descending)
             .with_limit(2);
-        let result = store.query_index_range(b"products", b"price", &query).unwrap();
+        let result = store
+            .query_index_range(b"products", b"price", &query)
+            .unwrap();
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].index_value, b"040");
         assert_eq!(result[1].index_value, b"030");
