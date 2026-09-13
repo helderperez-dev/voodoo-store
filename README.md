@@ -6,127 +6,152 @@ Voodoo Store is a **standalone, 100% Rust embedded application-state engine** bu
 
 > **A Voodoo application should be able to run robustly with Voodoo + Voodoo Store and no mandatory external infrastructure by default.**
 
-It is being built for the Voodoo ecosystem, but it is not coupled to Voodoo Framework. The engine and `.vstore` format are designed to be usable independently from Rust, C, C++, Python, JavaScript/TypeScript, Go, Swift, Kotlin, Java, .NET, and other runtimes.
+It is being built for the Voodoo ecosystem, but the core is not coupled to Voodoo Framework. The engine and `.vstore` format are designed to remain language-neutral and independently usable.
 
 **SQLite made the database a file. Voodoo Store aims to make application infrastructure a store.**
 
 ## Status
 
-**v0.1 functional embedded core.**
+**v0.1 usable single-node development release.**
 
-The repository now contains a working single-node embedded engine with:
+Voodoo Store is pre-1.0, but it is now suitable for controlled single-node development and production experiments where its current compatibility and operational limits are understood.
 
-- versioned and checksummed `.vstore` file header;
-- persistent store identity;
-- checksummed append-only durable log;
-- atomic transactions with commit markers;
-- deterministic crash recovery;
-- torn-tail detection and repair;
-- single-writer file locking;
-- configurable durability (`Strict`, `Data`, `Relaxed`);
-- transactional byte-oriented KV storage;
-- prefix scans;
-- verification and consistent physical backup;
-- durable queues with leases, delayed delivery, priorities, retry/nack, dead-letter state, and stale-ACK protection;
+The current engine includes:
+
+- versioned, checksummed `.vstore` files and strong persistent Store identity;
+- checksummed append-only logging, atomic transactions and deterministic crash recovery;
+- Linux/macOS/Windows single-writer locking and explicit durability modes;
+- byte-oriented KV, CAS, counters, prefix scans and TTL;
+- Collections with schema/codec metadata and secondary/unique indexes;
+- durable Queues with leases, delay, priority, retry/NACK, dead state and stale-ACK protection;
+- durable Jobs with 128-bit IDs, idempotency, retry/backoff, deadlines and execution history;
+- one-shot, interval and deterministic UTC Cron scheduling;
+- durable Triggers;
+- Topics, Streams, replay, durable subscriptions and Consumer Groups;
+- durable request/reply correlation and RPC state;
+- transactional Outbox events;
+- content-addressed SHA-256 object storage, deduplication, verification, references and orphan GC;
+- durable Workflow/HITL state with waits, signals, timers and history;
+- verify, backup, create-only restore, logical snapshots and compact-copy;
+- structured health/storage accounting;
 - standalone `voodoo-store` CLI;
-- initial C ABI for KV access.
+- C ABI v2 foundation with transactions, `last_error` and panic containment;
+- deterministic corruption, torn-write and process-crash testing;
+- CI across Format, Clippy, Linux, macOS, Windows and Rust 1.85 MSRV.
 
-CI validates formatting, Clippy with warnings denied, and the Rust workspace tests.
+This is **not yet a production 1.0**. File/API compatibility should still be considered pre-1.0, and important data should be backed up before upgrading experimental deployments.
 
-This is a functional development release, **not yet a production 1.0**. Collections/indexes/query, scheduler/cron, topics/streams, objects, compaction, replication, fuzzing, and broader language bindings remain under active development.
+## Start here
+
+Build and test:
+
+```bash
+cargo build --workspace
+cargo test --workspace
+```
+
+Run the executable application-state example:
+
+```bash
+cargo run -p voodoo-store-core --example application_state -- application.vstore
+```
+
+The example commits application state, a durable Job and an Outbox Event through one transaction:
+
+```text
+BEGIN
+  PUT order:42:status = paid
+  ENQUEUE JOB email.send_receipt(order:42)
+  EMIT EVENT order.paid(order:42)
+COMMIT
+```
+
+If that transaction does not commit, none of those staged mutations become visible after recovery.
+
+See `docs/QUICKSTART.md` for the full walkthrough.
 
 ## North Star
 
-The default deployment we are working toward is intentionally small:
+The standard Voodoo deployment is intentionally small:
 
 ```text
 Application
     |
     +-- Voodoo Runtime
     |
-    `-- app.vstore
+    `-- application.vstore
 ```
 
-No Redis, RabbitMQ, Celery, external cron service, Kafka, or separate local object service should be required merely to get a robust Voodoo application running.
+A normal application should not need Redis, PostgreSQL, RabbitMQ, Kafka, Celery, a separate cron service, or a separate local object service merely to get robust application infrastructure.
 
-External infrastructure remains possible when a workload genuinely requires it. It is not the default architecture.
+External infrastructure remains available as optional adapters when scale or deployment topology genuinely requires it.
 
 ## Architecture
 
 ```text
 Applications / Frameworks
         |
-        +-- Voodoo Framework
-        +-- Rust / C / C++
-        +-- Python / Node / Go
-        +-- Swift / Kotlin / Java / .NET
+        +-- Voodoo Runtime / Framework
+        +-- Rust
+        +-- C / native bindings
+        +-- future Python / Node / Go / Swift bindings
         |
-Language bindings / adapters
-        |
-Stable C ABI (voodoo-store-ffi)
-        |
-Rust API
+Stable APIs / bindings
         |
 voodoo-store-core
         |
-        +-- KV
-        +-- Durable Queue / Leases
-        +-- Messaging model primitives
-        +-- Automation model primitives
+        +-- Data: KV / TTL / Collections / Indexes
+        +-- Work: Queues / Jobs / Scheduler / Cron / Triggers
+        +-- Messaging: Topics / Streams / Consumer Groups / RPC / Outbox
+        +-- Objects
+        +-- Workflow state
+        +-- Operations / health / lifecycle
         |
 Transaction / Commit Layer
         |
 Append-only Checksummed Log
         |
-Recovery / Verification / Backup
+Recovery / Verification
         |
 Versioned .vstore Header
         |
 Filesystem + File Locking
 ```
 
-Rust consumers use the core directly. Other runtimes can use the C ABI or native bindings layered on top of the same storage semantics.
+The Store persists durable semantics. Voodoo Runtime executes application code, HTTP handlers, AI inference, external calls and Identity/Auth behavior.
 
-## Rust quick start
+## Cross-domain transactions
+
+A major Voodoo Store goal is to remove the split-brain normally created by a database plus external work infrastructure.
+
+Current typed transaction primitives already allow application state, Jobs, Outbox Events and durable RPC Requests to share a Store transaction.
 
 ```rust
-use voodoo_store_core::Store;
+use voodoo_store_core::{JobSpec, Store};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut store = Store::open("app.vstore")?;
+    let mut store = Store::open("application.vstore")?;
 
-    // Autocommit KV
-    store.put(b"user:1", b"Helder")?;
-    assert_eq!(store.get(b"user:1"), Some(b"Helder".as_slice()));
-
-    // Atomic multi-operation transaction
     let mut tx = store.begin()?;
-    tx.put(b"user:2", b"Bruna")?;
-    tx.put(b"settings:theme", b"dark")?;
+    tx.put(b"order:42:status", b"paid")?;
+    tx.enqueue_job(JobSpec::new(b"email.send_receipt", b"order:42"), 1_000)?;
+    tx.emit_event(b"order.paid", b"order:42", 1_000)?;
+    tx.request_rpc(b"payments.capture", b"order:42", 1_000, Some(31_000))?;
     tx.commit()?;
-
-    // Durable embedded queue
-    let mut queue = store.queue(b"emails")?;
-    queue.push(b"welcome:user:1")?;
-
-    let job = queue.claim(1_000, 30_000)?.expect("queued message");
-    queue.ack(job.id, job.lease_generation)?;
 
     Ok(())
 }
 ```
 
-Committed state and queue state survive process restarts.
+The public cross-domain transaction surface will continue expanding to additional primitives before 1.0.
 
 ## Durability
-
-The engine exposes explicit durability policy:
 
 ```rust
 use voodoo_store_core::{Durability, Store, StoreOptions};
 
 let store = Store::open_with_options(
-    "app.vstore",
+    "application.vstore",
     StoreOptions {
         durability: Durability::Strict,
         repair_torn_tail: true,
@@ -138,113 +163,61 @@ let store = Store::open_with_options(
 - `Data` uses `sync_data()` on commit and is the default.
 - `Relaxed` relies on later operating-system flushing.
 
-A torn final record is treated as an interrupted write. With tail repair enabled, Voodoo Store truncates the file back to the last fully valid record before accepting new writes.
+Only an incomplete physical tail is automatically repairable. Corruption inside the durable prefix is surfaced as an error rather than silently discarded.
 
-## Queue semantics
+## Current good-fit workloads
 
-The current durable queue supports:
+v0.1 is a reasonable target for controlled use in:
 
-```text
-push
-push_at
-priority
-claim + lease
-lease expiry / reclaim
-ack
-nack + delayed retry
-dead-letter
-queue stats
-purge dead
-```
+- Voodoo Runtime development;
+- SaaS/internal-tool prototypes and early deployments;
+- desktop/local-first applications;
+- AI agent and automation state;
+- edge gateways and robotics controllers;
+- single-node APIs that want durable Jobs/Queues without deploying an infrastructure stack.
 
-Every successful claim increments a lease generation. An old worker cannot acknowledge a message after its lease expired and another worker reclaimed the same message.
+Pin the exact Store version and keep backups for important pre-1.0 stores.
 
-Delivery is therefore designed around explicit at-least-once semantics with durable identity rather than unsafe exactly-once claims.
+## Known pre-1.0 limits
+
+The main remaining work before a 1.0 claim includes:
+
+- continuous fuzzing and long-running durability soak tests;
+- identity-preserving checkpoints/log generations and atomic in-place compaction;
+- richer Collection query/range/composite-index support;
+- CDC, change feeds and live-query/watch APIs;
+- complete cross-domain transaction coverage for all Store primitives;
+- quotas, richer metrics and tracing;
+- streaming object I/O and lifecycle policies;
+- complete C ABI coverage and first-class language bindings;
+- encryption-at-rest/key-rotation design;
+- later replication/sync and Voodoo Protocol integration.
+
+Store Studio and distributed operation are later milestones and do not block controlled single-node use.
 
 ## CLI
 
-The workspace includes the `voodoo-store` binary.
+The workspace includes the standalone `voodoo-store` binary. Examples:
 
 ```bash
-cargo run -p voodoo-store-cli -- put app.vstore hello world
-cargo run -p voodoo-store-cli -- get app.vstore hello
-cargo run -p voodoo-store-cli -- verify app.vstore
-cargo run -p voodoo-store-cli -- backup app.vstore app.backup.vstore
-
-cargo run -p voodoo-store-cli -- queue-push app.vstore emails 'welcome:user:1'
-cargo run -p voodoo-store-cli -- queue-claim app.vstore emails 1000 30000
-cargo run -p voodoo-store-cli -- queue-stats app.vstore emails
+cargo run -p voodoo-store-cli -- put application.vstore hello world
+cargo run -p voodoo-store-cli -- get application.vstore hello
+cargo run -p voodoo-store-cli -- health application.vstore
+cargo run -p voodoo-store-cli -- verify application.vstore
+cargo run -p voodoo-store-cli -- backup application.vstore application.backup.vstore
 ```
 
-See `docs/QUICKSTART.md` for a complete walkthrough.
-
-## Verification and backup
-
-```rust
-let report = Store::verify("app.vstore")?;
-println!("records = {}", report.records);
-println!("keys = {}", report.keys);
-println!("torn tail = {}", report.has_torn_tail());
-
-let store = Store::open("app.vstore")?;
-store.backup_to("app.backup.vstore")?;
-```
-
-Verification checks the header, record framing, checksums, transaction ordering, and recoverable state without mutating the source file.
+The CLI also exposes lifecycle, Queue, Collection, Messaging, Object, Job, Scheduler, Cron, Trigger and Workflow operations. See `docs/QUICKSTART.md` for usage guidance.
 
 ## C ABI
 
-The initial ABI lives in `voodoo-store-ffi`, with the public header at:
+`voodoo-store-ffi` is the portability foundation for non-Rust bindings. The current ABI includes Store handles, KV operations, buffered transactions, thread-local `last_error` reporting and panic containment. Higher-level primitive coverage is still expanding before the ABI is considered complete.
+
+Public header:
 
 ```text
 include/voodoo_store.h
 ```
-
-Current foundation:
-
-```text
-vds_abi_version
-vds_open
-vds_close
-vds_put
-vds_get
-vds_delete
-```
-
-Higher-level queue, transaction, messaging, and automation bindings will be added without changing the language-neutral storage contract.
-
-## Where this is going
-
-The target application-state engine is broader than KV + queue:
-
-```text
-Voodoo Store
-├── Data
-│   ├── KV
-│   ├── Collections
-│   ├── Schema
-│   ├── Indexes
-│   └── Query
-├── Messaging
-│   ├── Queues
-│   ├── Topics
-│   ├── Streams
-│   ├── Subscriptions
-│   └── Request/Reply
-├── Automation
-│   ├── Jobs
-│   ├── Scheduler
-│   ├── Cron
-│   ├── Delayed work
-│   └── Triggers
-├── Objects
-├── Durable workflow state
-├── Change feeds / live queries
-├── Snapshots / compaction / backup
-└── Sync / replication / Voodoo Protocol
-```
-
-These capabilities share one transactional foundation rather than behaving as unrelated services.
 
 ## Workspace
 
@@ -267,26 +240,23 @@ docs/
 
 ## Voodoo integration
 
-Voodoo Framework will eventually make Store the zero-infrastructure default behind its existing high-level primitives. Application code should not need to know which internal Store records implement a model, task, event, or schedule.
-
-Conceptually:
+Voodoo Framework/Runtime will consume Store behind higher-level primitives while the engine stays independently usable.
 
 ```text
-Voodoo Model       -> Voodoo Store data
-Voodoo @task       -> Voodoo Store jobs/queue
-Voodoo Scheduler   -> Voodoo Store time/schedules
-Voodoo Mesh        -> Voodoo Store durable messaging
-Voodoo ObjectStore -> Voodoo Store objects
-Execution/HITL     -> Voodoo Store durable runtime state
+Voodoo Model       -> Store Collections / data
+Voodoo @task       -> Store Jobs / Queues
+Voodoo Scheduler   -> Store schedules / Cron
+Voodoo events      -> Store Topics / Streams / Outbox
+Voodoo ObjectStore -> Store Objects
+Execution / HITL   -> Store Workflow state
+Runtime Identity   -> durable state persisted through Store
 ```
 
-The engine itself remains usable without Voodoo.
+Identity/Auth semantics remain in Voodoo Runtime, not in Voodoo Store.
 
 ## Compatibility principle
 
-A store written from one supported language must be readable from another supported language using a compatible engine version.
-
-The durable format cannot depend on Python pickle, Java serialization, V8 objects, Go gob, or another host-specific representation. The lowest-level contract is bytes; typed codecs and schemas are layered above it.
+The lowest-level durable contract is bytes. Voodoo Store does not persist host-specific Python pickle, Java serialization, V8 objects or Go gob as its core format. Typed codecs and schemas are layered above the engine so a compatible Store can be accessed from multiple runtimes.
 
 ## Development principle
 
