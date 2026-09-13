@@ -12,15 +12,19 @@ Implemented today:
 - [x] checksummed append-only log
 - [x] atomic transactions and deterministic recovery
 - [x] torn-tail detection and repair
-- [x] single-writer locking
+- [x] single-writer locking across supported desktop/server targets
 - [x] explicit durability modes
 - [x] transactional KV + prefix scan
-- [x] verify and physical backup primitives
+- [x] protected engine-internal mutation namespace
+- [x] atomic compare-and-swap and signed counters
+- [x] verify, physical backup, verified restore-copy and compact-copy primitives
 - [x] durable queue with lease, delayed delivery, priority, nack/retry and dead-letter state
 - [x] stale-ACK protection through lease generations
 - [x] standalone CLI
 - [x] initial C ABI
+- [x] deterministic torn-write, corruption and process-crash tests
 - [x] formatting + Clippy + workspace tests in CI
+- [x] Linux, macOS, Windows and Rust 1.85 MSRV CI coverage
 
 The remaining items below move the engine from a functional embedded core toward the broader goal: Voodoo + Voodoo Store as a zero-required-infrastructure application platform.
 
@@ -44,10 +48,11 @@ Goal: establish the byte-level source of truth.
 - [x] file locking and single-writer enforcement
 - [x] store header / store identity / format negotiation
 - [x] corruption surfaced rather than silently accepted in the durable prefix
-- [ ] deterministic failure-injection harness
+- [x] deterministic process-crash failure-injection harness
+- [x] deterministic byte-mutation and truncation sweeps for header/record decoding
 - [ ] fuzz record decoder and recovery scanner
-- [ ] MSRV CI lane
-- [ ] cross-platform CI lane for Linux/macOS/Windows
+- [x] MSRV CI lane
+- [x] cross-platform CI lane for Linux/macOS/Windows
 
 ## M1 — Embedded KV and storage lifecycle
 
@@ -58,14 +63,15 @@ Goal: make the durable core efficient and operationally safe.
 - [x] prefix scans
 - [x] consistent physical backup
 - [x] verify / inspect foundation
-- [ ] protected internal/user namespaces
-- [ ] atomic compare-and-swap
-- [ ] atomic counters
+- [x] protected internal/user mutation namespaces
+- [x] atomic compare-and-swap
+- [x] atomic counters
 - [ ] TTL semantics
 - [ ] snapshots/checkpoints
 - [ ] log generations
-- [ ] safe cross-platform compaction
-- [ ] restore workflow
+- [x] safe verified compact-copy generation
+- [ ] atomic in-place cross-platform compaction / generation replacement
+- [x] verified create-only restore workflow
 - [ ] repair tooling beyond torn-tail repair
 - [ ] quotas and storage accounting
 - [ ] benchmark harness
@@ -176,6 +182,7 @@ Goal: make Store safe to operate as embedded infrastructure.
 - [ ] compaction backlog
 - [ ] tracing hooks
 - [x] CLI inspection and operation foundation
+- [x] CLI verify / backup / restore-copy / compact-copy lifecycle commands
 
 ## M7.5 — Voodoo Store Studio
 
@@ -219,7 +226,8 @@ Architecture requirements:
 Goal: connect correct local stores safely.
 
 - [ ] replication protocol specification
-- [ ] stronger node/store identity generation for distributed use
+- [x] cryptographically strong store identity generation from OS entropy
+- [ ] canonical node identity for distributed deployments
 - [ ] log shipping / logical change shipping
 - [ ] replica checkpoints
 - [ ] offline/online synchronization
@@ -261,7 +269,7 @@ Voodoo + Voodoo Store reaches the product North Star when a normal application c
 - [ ] object/blob storage
 - [ ] durable execution and HITL waiting state
 - [ ] workflow persistence
-- [ ] operational inspect/backup/verify/compact tooling
+- [x] operational inspect/backup/verify/restore-copy/compact-copy tooling
 - [ ] visual local administration through Voodoo Store Studio
 
 External providers can remain optional adapters for workloads that outgrow the embedded deployment model.
