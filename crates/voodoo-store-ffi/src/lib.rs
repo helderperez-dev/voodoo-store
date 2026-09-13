@@ -28,10 +28,7 @@ pub extern "C" fn vds_abi_version() -> u32 {
 /// must be a valid writable pointer. On success, the caller owns the returned
 /// handle and must release it with [`vds_close`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn vds_open(
-    path: *const c_char,
-    out_handle: *mut *mut VdsHandle,
-) -> i32 {
+pub unsafe extern "C" fn vds_open(path: *const c_char, out_handle: *mut *mut VdsHandle) -> i32 {
     if path.is_null() || out_handle.is_null() {
         return VDS_INVALID_ARGUMENT;
     }
@@ -203,18 +200,39 @@ mod tests {
         let mut handle = ptr::null_mut();
 
         assert_eq!(unsafe { vds_open(c_path.as_ptr(), &mut handle) }, VDS_OK);
-        assert_eq!(unsafe { vds_put(handle, b"name".as_ptr(), 4, b"Voodoo".as_ptr(), 6) }, VDS_OK);
+        assert_eq!(
+            unsafe { vds_put(handle, b"name".as_ptr(), 4, b"Voodoo".as_ptr(), 6) },
+            VDS_OK
+        );
 
         let mut required = 0usize;
         assert_eq!(
-            unsafe { vds_get(handle, b"name".as_ptr(), 4, ptr::null_mut(), 0, &mut required) },
+            unsafe {
+                vds_get(
+                    handle,
+                    b"name".as_ptr(),
+                    4,
+                    ptr::null_mut(),
+                    0,
+                    &mut required,
+                )
+            },
             VDS_BUFFER_TOO_SMALL
         );
         assert_eq!(required, 6);
 
         let mut output = vec![0u8; required];
         assert_eq!(
-            unsafe { vds_get(handle, b"name".as_ptr(), 4, output.as_mut_ptr(), output.len(), &mut required) },
+            unsafe {
+                vds_get(
+                    handle,
+                    b"name".as_ptr(),
+                    4,
+                    output.as_mut_ptr(),
+                    output.len(),
+                    &mut required,
+                )
+            },
             VDS_OK
         );
         assert_eq!(&output, b"Voodoo");
