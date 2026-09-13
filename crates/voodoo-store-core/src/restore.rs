@@ -121,7 +121,7 @@ mod tests {
     }
 
     #[test]
-    fn restore_copy_preserves_identity_data_and_queue_state() {
+    fn restore_copy_preserves_identity_data_queue_and_change_feed() {
         let source = temp_store_path("source");
         let destination = temp_store_path("destination");
         let source_id;
@@ -134,13 +134,15 @@ mod tests {
             queue.push(b"welcome").unwrap();
         }
 
+        let source_report = Store::verify(&source).unwrap();
         let report = Store::restore_copy(&source, &destination).unwrap();
         assert_eq!(report.store_id, source_id);
-        assert_eq!(report.keys, 3);
+        assert_eq!(report.keys, source_report.keys);
 
         let mut restored = Store::open(&destination).unwrap();
         assert_eq!(restored.header().store_id, source_id);
         assert_eq!(restored.get(b"user:1"), Some(b"Helder".as_slice()));
+        assert!(!restored.changes_after(None, 100).unwrap().is_empty());
         let mut queue = restored.queue(b"emails").unwrap();
         let message = queue.claim(0, 1_000).unwrap().unwrap();
         assert_eq!(message.payload, b"welcome");
