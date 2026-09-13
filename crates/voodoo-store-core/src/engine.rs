@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
-use crate::log::{encoded_record_len_from_prefix, LogRecord, RecordKind, StoreError, HEADER_LEN};
+use crate::log::{HEADER_LEN, LogRecord, RecordKind, StoreError, encoded_record_len_from_prefix};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Operation {
@@ -75,7 +75,12 @@ impl Store {
         }
     }
 
-    fn append(&mut self, kind: RecordKind, tx_id: u64, payload: Vec<u8>) -> Result<(), EngineError> {
+    fn append(
+        &mut self,
+        kind: RecordKind,
+        tx_id: u64,
+        payload: Vec<u8>,
+    ) -> Result<(), EngineError> {
         let sequence = self.next_sequence;
         self.next_sequence = self.next_sequence.saturating_add(1);
         let bytes = LogRecord::new(kind, tx_id, sequence, payload).encode()?;
@@ -121,7 +126,8 @@ impl Transaction<'_> {
 
     pub fn commit(mut self) -> Result<(), EngineError> {
         self.ensure_open()?;
-        self.store.append(RecordKind::Commit, self.tx_id, Vec::new())?;
+        self.store
+            .append(RecordKind::Commit, self.tx_id, Vec::new())?;
         self.store.file.sync_data()?;
         apply_operations(&mut self.store.state, &self.operations);
         self.finished = true;
