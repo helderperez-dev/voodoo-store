@@ -6,7 +6,9 @@
 
 use thiserror::Error;
 
-use crate::{EngineError, JobError, JobId, JobSpec, Store};
+use crate::{
+    EngineError, JobError, JobId, JobSpec, Store, Transaction, TransactionalError,
+};
 
 const TRIGGER_PREFIX: &[u8] = b"\xffvds:trigger:data:";
 const VERSION: u8 = 1;
@@ -45,6 +47,8 @@ pub enum TriggerError {
     Store(#[from] EngineError),
     #[error("job error: {0}")]
     Job(#[from] JobError),
+    #[error("transactional job error: {0}")]
+    Transactional(#[from] TransactionalError),
     #[error("trigger not found")]
     NotFound,
     #[error("trigger name cannot be empty")]
@@ -111,18 +115,34 @@ impl Store {
         Ok(true)
     }
 
-    /// Routes a trigger fire to the durable Jobs subsystem. Disabled triggers
-    /// return `Ok(None)`. Cross-domain atomicity with arbitrary application
-    /// mutations is intentionally provided later by the shared transaction API.
+    /// Atomically creates the trigger's durable job and advances trigger fire
+    /// metadata in one Store transaction.
     pub fn fire_trigger(
         &mut self,
         id: &TriggerId,
         event_payload: impl AsRef<[u8]>,
         now_ms: i64,
     ) -> Result<Option<JobId>, TriggerError> {
-        let Some(mut trigger) = self.get_trigger(id)? else {
+        let mut tx = self.begin()?;
+        let job_id = tx.fire_trigger(id, event_payload, now_ms)?;
+        tx.commit()?;
+        Ok(job_id)
+    }
+}
+
+impl Transaction<'_> {
+    /// Stages a trigger fire in the surrounding transaction. The job record,
+    /// submitted history, fire counter, and timestamp become visible together.
+    pub fn fire_trigger(
+        &mut self,
+        id: &TriggerId,
+        event_payload: impl AsRef<[u8]>,
+        now_ms: i64,
+    ) -> Result<Option<JobId>, TriggerError> {
+        let Some(encoded) = self.get_internal(trigger_key(id)) else {
             return Err(TriggerError::NotFound);
         };
+        let mut trigger = decode_trigger(encoded)?;
         if !trigger.enabled {
             return Ok(None);
         }
@@ -134,7 +154,7 @@ impl Store {
         }
         validate_job(&spec)?;
 
-        let job_id = self.submit_job(spec, now_ms)?;
+        let job_id = self.enqueue_job(spec, now_ms)?;
         trigger.fire_count = trigger
             .fire_count
             .checked_add(1)
@@ -471,6 +491,56 @@ mod tests {
         assert!(store.set_trigger_enabled(&id, false).unwrap());
         assert_eq!(store.fire_trigger(&id, b"event", 1).unwrap(), None);
         assert_eq!(store.get_trigger(&id).unwrap().unwrap().fire_count, 0);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn trigger_fire_can_share_application_transaction() {
+        let path = temp_store_path("transactional");
+        let mut store = Store::open(&path).unwrap();
+        let id = store
+            .create_trigger(
+                b"manual",
+                TriggerSource::Manual,
+                JobSpec::new(b"handler".to_vec(), b"template".to_vec()),
+            )
+            .unwrap();
+        let job_id;
+        {
+            let mut tx = store.begin().unwrap();
+            tx.put(b"app:event", b"accepted").unwrap();
+            job_id = tx.fire_trigger(&id, b"event", 10).unwrap().unwrap();
+            tx.commit().unwrap();
+        }
+        assert_eq!(store.get(b"app:event"), Some(b"accepted".as_slice()));
+        assert_eq!(store.get_job(&job_id).unwrap().unwrap().payload, b"event");
+        let trigger = store.get_trigger(&id).unwrap().unwrap();
+        assert_eq!(trigger.fire_count, 1);
+        assert_eq!(trigger.last_fired_at_ms, Some(10));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn trigger_fire_rollback_hides_job_and_metadata_update() {
+        let path = temp_store_path("rollback");
+        let mut store = Store::open(&path).unwrap();
+        let id = store
+            .create_trigger(
+                b"manual",
+                TriggerSource::Manual,
+                JobSpec::new(b"handler".to_vec(), b"template".to_vec()),
+            )
+            .unwrap();
+        let job_id;
+        {
+            let mut tx = store.begin().unwrap();
+            job_id = tx.fire_trigger(&id, b"event", 10).unwrap().unwrap();
+            tx.rollback().unwrap();
+        }
+        assert!(store.get_job(&job_id).unwrap().is_none());
+        let trigger = store.get_trigger(&id).unwrap().unwrap();
+        assert_eq!(trigger.fire_count, 0);
+        assert_eq!(trigger.last_fired_at_ms, None);
         let _ = fs::remove_file(path);
     }
 }
