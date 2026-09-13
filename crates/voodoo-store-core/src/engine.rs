@@ -85,7 +85,7 @@ impl Store {
             .write(true)
             .open(&path)?;
 
-        file.try_lock_exclusive().map_err(map_lock_error)?;
+        FileExt::try_lock_exclusive(&file).map_err(map_lock_error)?;
 
         let header = load_or_initialize_header(&mut file)?;
         let recovery = recover(&mut file)?;
@@ -110,7 +110,7 @@ impl Store {
 
     pub fn verify(path: impl AsRef<Path>) -> Result<VerificationReport, EngineError> {
         let mut file = OpenOptions::new().read(true).open(path)?;
-        file.try_lock_shared().map_err(map_lock_error)?;
+        FileExt::try_lock_shared(&file).map_err(map_lock_error)?;
 
         let mut header_bytes = [0u8; STORE_HEADER_LEN];
         file.read_exact(&mut header_bytes)?;
