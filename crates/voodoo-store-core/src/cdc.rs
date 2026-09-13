@@ -60,7 +60,10 @@ pub(crate) fn stage_changes(
                     value_len: Some(value.len() as u64),
                     value_sha256: Some(Sha256::digest(value).into()),
                 };
-                (change_key(tx.id(), sequence), encode_change(&record).map_err(map_cdc_error)?)
+                (
+                    change_key(tx.id(), sequence),
+                    encode_change(&record).map_err(map_cdc_error)?,
+                )
             }
             Operation::Delete(key) if !key.starts_with(CDC_PREFIX) => {
                 let record = ChangeRecord {
@@ -71,7 +74,10 @@ pub(crate) fn stage_changes(
                     value_len: None,
                     value_sha256: None,
                 };
-                (change_key(tx.id(), sequence), encode_change(&record).map_err(map_cdc_error)?)
+                (
+                    change_key(tx.id(), sequence),
+                    encode_change(&record).map_err(map_cdc_error)?,
+                )
             }
             _ => continue,
         };
@@ -144,7 +150,7 @@ impl Store {
             return Ok(0);
         }
         let removed = keys.len();
-        let mut tx = self.begin()?;
+        let mut tx = self.begin_without_cdc()?;
         for key in keys {
             tx.delete_internal(key)?;
         }
