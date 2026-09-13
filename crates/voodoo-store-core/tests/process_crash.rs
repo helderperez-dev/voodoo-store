@@ -97,10 +97,7 @@ fn process_exit_after_commit_preserves_committed_transaction() {
 
     let store = Store::open(&path).unwrap();
     assert_eq!(store.get(b"safe"), Some(b"committed".as_slice()));
-    assert_eq!(
-        store.get(b"crash:after"),
-        Some(b"must-survive".as_slice())
-    );
+    assert_eq!(store.get(b"crash:after"), Some(b"must-survive".as_slice()));
     drop(store);
 
     let _ = fs::remove_file(path);
