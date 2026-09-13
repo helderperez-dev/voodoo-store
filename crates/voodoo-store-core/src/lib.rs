@@ -1,8 +1,12 @@
-//! Core primitives for Voodoo Store.
+//! Core primitives and embedded engine for Voodoo Store.
 //!
-//! This crate intentionally starts small. The first milestone is a durable,
-//! append-only record log with deterministic validation and recovery rules.
+//! `voodoo-store-core` is intentionally framework-agnostic. It contains no
+//! dependency on Voodoo Framework, Python, Node.js, or any foreign runtime.
+//! Language bindings must sit above this crate so the on-disk format and core
+//! semantics remain portable and independently usable.
 
+pub mod engine;
 pub mod log;
 
+pub use engine::{EngineError, Store, Transaction};
 pub use log::{LogRecord, RecordKind, StoreError};
