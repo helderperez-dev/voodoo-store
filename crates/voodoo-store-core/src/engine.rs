@@ -55,7 +55,7 @@ impl VerificationReport {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum Operation {
+pub(crate) enum Operation {
     Put(Vec<u8>, Vec<u8>),
     Delete(Vec<u8>),
 }
@@ -360,6 +360,8 @@ impl Transaction<'_> {
 
     pub fn commit(mut self) -> Result<(), EngineError> {
         self.ensure_open()?;
+        let committed_operations = self.operations.clone();
+        crate::cdc::stage_changes(&mut self, &committed_operations)?;
         self.store
             .append(RecordKind::Commit, self.tx_id, Vec::new())?;
         sync_file(&self.store.file, self.store.options.durability)?;
@@ -797,7 +799,7 @@ mod tests {
             store.put(b"b", b"2").unwrap();
         }
         let report = Store::verify(&path).unwrap();
-        assert_eq!(report.keys, 2);
+        assert_eq!(report.keys, 4);
         assert_eq!(report.committed_transactions, 2);
         assert!(!report.has_torn_tail());
         let _ = fs::remove_file(path);
