@@ -168,10 +168,15 @@ fn reserve_source_image(destination: &Path) -> Result<PathBuf, GenerationError> 
 
     for _ in 0..16 {
         let mut nonce = [0u8; 8];
-        getrandom::fill(&mut nonce).map_err(|error| GenerationError::Randomness(error.to_string()))?;
+        getrandom::fill(&mut nonce)
+            .map_err(|error| GenerationError::Randomness(error.to_string()))?;
         let suffix = u64::from_le_bytes(nonce);
         let candidate = parent.join(format!(".{base}.source-{suffix:016x}.tmp"));
-        match OpenOptions::new().write(true).create_new(true).open(&candidate) {
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
             Ok(file) => {
                 drop(file);
                 return Ok(candidate);
