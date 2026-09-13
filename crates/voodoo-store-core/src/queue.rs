@@ -156,7 +156,8 @@ impl<'a> Queue<'a> {
         now_ms: i64,
         lease_duration_ms: u64,
     ) -> Result<Option<QueueMessage>, QueueError> {
-        let lease_duration = i64::try_from(lease_duration_ms).map_err(|_| QueueError::TimeOverflow)?;
+        let lease_duration =
+            i64::try_from(lease_duration_ms).map_err(|_| QueueError::TimeOverflow)?;
         let lease_until_ms = now_ms
             .checked_add(lease_duration)
             .ok_or(QueueError::TimeOverflow)?;
@@ -245,10 +246,16 @@ impl<'a> Queue<'a> {
         let mut stats = QueueStats::default();
         for (_, value) in self.store.scan_prefix(&self.message_prefix) {
             let message = decode_message(&value)?;
-            stats.total = stats.total.checked_add(1).ok_or(QueueError::CountOverflow)?;
+            stats.total = stats
+                .total
+                .checked_add(1)
+                .ok_or(QueueError::CountOverflow)?;
             match message.state {
                 QueueState::Ready => {
-                    stats.ready = stats.ready.checked_add(1).ok_or(QueueError::CountOverflow)?;
+                    stats.ready = stats
+                        .ready
+                        .checked_add(1)
+                        .ok_or(QueueError::CountOverflow)?;
                 }
                 QueueState::Leased => {
                     stats.leased = stats
@@ -334,7 +341,8 @@ fn validate_lease(message: &StoredMessage, lease_generation: u32) -> Result<(), 
 }
 
 fn encode_message(message: &StoredMessage) -> Result<Vec<u8>, QueueError> {
-    let payload_len = u32::try_from(message.payload.len()).map_err(|_| QueueError::PayloadTooLarge)?;
+    let payload_len =
+        u32::try_from(message.payload.len()).map_err(|_| QueueError::PayloadTooLarge)?;
     let mut out = Vec::with_capacity(1 + 1 + 8 + 4 + 4 + 8 + 8 + 4 + message.payload.len());
     out.push(MESSAGE_VERSION);
     out.push(message.state as u8);
@@ -355,7 +363,11 @@ fn decode_message(bytes: &[u8]) -> Result<StoredMessage, QueueError> {
     }
 
     let state = QueueState::try_from(bytes[1])?;
-    let id = u64::from_le_bytes(bytes[2..10].try_into().map_err(|_| QueueError::InvalidEncoding)?);
+    let id = u64::from_le_bytes(
+        bytes[2..10]
+            .try_into()
+            .map_err(|_| QueueError::InvalidEncoding)?,
+    );
     let attempts = u32::from_le_bytes(
         bytes[10..14]
             .try_into()
@@ -420,9 +432,7 @@ pub enum QueueError {
     NotFound(u64),
     #[error("queue message {0} is not currently leased")]
     NotLeased(u64),
-    #[error(
-        "lease generation mismatch for message {id}: expected {expected}, provided {provided}"
-    )]
+    #[error("lease generation mismatch for message {id}: expected {expected}, provided {provided}")]
     LeaseMismatch {
         id: u64,
         expected: u32,
