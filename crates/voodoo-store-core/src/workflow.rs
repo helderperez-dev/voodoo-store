@@ -6,7 +6,7 @@
 
 use thiserror::Error;
 
-use crate::{EngineError, Store};
+use crate::{EngineError, Store, Transaction};
 
 const INSTANCE_PREFIX: &[u8] = b"\xffvds:wf:instance:";
 const HISTORY_PREFIX: &[u8] = b"\xffvds:wf:history:";
@@ -402,6 +402,255 @@ impl Store {
     }
 }
 
+impl Transaction<'_> {
+    pub fn create_workflow(
+        &mut self,
+        workflow_type: impl AsRef<[u8]>,
+        initial_step: impl AsRef<[u8]>,
+        initial_state: impl AsRef<[u8]>,
+        parent_id: Option<WorkflowId>,
+        now_ms: i64,
+    ) -> Result<WorkflowId, WorkflowError> {
+        let workflow_type = workflow_type.as_ref();
+        let initial_step = initial_step.as_ref();
+        if workflow_type.is_empty() {
+            return Err(WorkflowError::EmptyWorkflowType);
+        }
+        if initial_step.is_empty() {
+            return Err(WorkflowError::EmptyStep);
+        }
+        let id = random_id()?;
+        let instance = WorkflowInstance {
+            id,
+            workflow_type: workflow_type.to_vec(),
+            status: WorkflowStatus::Running,
+            current_step: initial_step.to_vec(),
+            state: initial_state.as_ref().to_vec(),
+            parent_id,
+            wait: None,
+            created_at_ms: now_ms,
+            updated_at_ms: now_ms,
+        };
+        let history = WorkflowHistoryEntry {
+            sequence: 0,
+            at_ms: now_ms,
+            kind: WorkflowHistoryKind::Created,
+            detail: Vec::new(),
+        };
+        self.put_internal(instance_key(&id), encode_instance(&instance)?)?;
+        self.put_internal(history_key(&id, 0), encode_history(&history)?)?;
+        Ok(id)
+    }
+
+    pub fn set_workflow_step(
+        &mut self,
+        id: &WorkflowId,
+        step: impl AsRef<[u8]>,
+        state: impl AsRef<[u8]>,
+        now_ms: i64,
+    ) -> Result<(), WorkflowError> {
+        let step = step.as_ref();
+        if step.is_empty() {
+            return Err(WorkflowError::EmptyStep);
+        }
+        let mut instance = self.workflow_instance(id)?;
+        ensure_active(&instance)?;
+        instance.status = WorkflowStatus::Running;
+        instance.current_step = step.to_vec();
+        instance.state = state.as_ref().to_vec();
+        instance.wait = None;
+        instance.updated_at_ms = now_ms;
+        self.persist_workflow_with_history(
+            &instance,
+            now_ms,
+            WorkflowHistoryKind::StepChanged,
+            step,
+        )
+    }
+
+    pub fn wait_for_signal(
+        &mut self,
+        id: &WorkflowId,
+        signal: impl AsRef<[u8]>,
+        now_ms: i64,
+    ) -> Result<(), WorkflowError> {
+        let signal = signal.as_ref();
+        if signal.is_empty() {
+            return Err(WorkflowError::EmptySignal);
+        }
+        let mut instance = self.workflow_instance(id)?;
+        ensure_active(&instance)?;
+        instance.status = WorkflowStatus::Waiting;
+        instance.wait = Some(WorkflowWait::Signal {
+            name: signal.to_vec(),
+        });
+        instance.updated_at_ms = now_ms;
+        self.persist_workflow_with_history(
+            &instance,
+            now_ms,
+            WorkflowHistoryKind::WaitingSignal,
+            signal,
+        )
+    }
+
+    pub fn signal_workflow(
+        &mut self,
+        id: &WorkflowId,
+        signal: impl AsRef<[u8]>,
+        payload: impl AsRef<[u8]>,
+        now_ms: i64,
+    ) -> Result<bool, WorkflowError> {
+        let signal = signal.as_ref();
+        let mut instance = self.workflow_instance(id)?;
+        let Some(WorkflowWait::Signal { name }) = instance.wait.as_ref() else {
+            return Ok(false);
+        };
+        if name.as_slice() != signal {
+            return Ok(false);
+        }
+        instance.status = WorkflowStatus::Running;
+        instance.wait = None;
+        instance.state = payload.as_ref().to_vec();
+        instance.updated_at_ms = now_ms;
+        self.persist_workflow_with_history(
+            &instance,
+            now_ms,
+            WorkflowHistoryKind::SignalReceived,
+            signal,
+        )?;
+        Ok(true)
+    }
+
+    pub fn wait_until(
+        &mut self,
+        id: &WorkflowId,
+        resume_at_ms: i64,
+        now_ms: i64,
+    ) -> Result<(), WorkflowError> {
+        let mut instance = self.workflow_instance(id)?;
+        ensure_active(&instance)?;
+        instance.status = WorkflowStatus::Waiting;
+        instance.wait = Some(WorkflowWait::Timer { resume_at_ms });
+        instance.updated_at_ms = now_ms;
+        self.persist_workflow_with_history(
+            &instance,
+            now_ms,
+            WorkflowHistoryKind::WaitingTimer,
+            &resume_at_ms.to_le_bytes(),
+        )
+    }
+
+    pub fn complete_workflow(
+        &mut self,
+        id: &WorkflowId,
+        final_state: impl AsRef<[u8]>,
+        now_ms: i64,
+    ) -> Result<(), WorkflowError> {
+        self.finish_workflow_tx(
+            id,
+            WorkflowStatus::Completed,
+            WorkflowHistoryKind::Completed,
+            final_state.as_ref(),
+            now_ms,
+        )
+    }
+
+    pub fn fail_workflow(
+        &mut self,
+        id: &WorkflowId,
+        error: impl AsRef<[u8]>,
+        now_ms: i64,
+    ) -> Result<(), WorkflowError> {
+        self.finish_workflow_tx(
+            id,
+            WorkflowStatus::Failed,
+            WorkflowHistoryKind::Failed,
+            error.as_ref(),
+            now_ms,
+        )
+    }
+
+    pub fn cancel_workflow(
+        &mut self,
+        id: &WorkflowId,
+        reason: impl AsRef<[u8]>,
+        now_ms: i64,
+    ) -> Result<bool, WorkflowError> {
+        let mut instance = self.workflow_instance(id)?;
+        if is_terminal(instance.status) {
+            return Ok(false);
+        }
+        instance.status = WorkflowStatus::Cancelled;
+        instance.wait = None;
+        instance.updated_at_ms = now_ms;
+        self.persist_workflow_with_history(
+            &instance,
+            now_ms,
+            WorkflowHistoryKind::Cancelled,
+            reason.as_ref(),
+        )?;
+        Ok(true)
+    }
+
+    fn workflow_instance(&self, id: &WorkflowId) -> Result<WorkflowInstance, WorkflowError> {
+        self.get_internal(instance_key(id))
+            .map(decode_instance)
+            .transpose()?
+            .ok_or(WorkflowError::NotFound)
+    }
+
+    fn finish_workflow_tx(
+        &mut self,
+        id: &WorkflowId,
+        status: WorkflowStatus,
+        kind: WorkflowHistoryKind,
+        detail: &[u8],
+        now_ms: i64,
+    ) -> Result<(), WorkflowError> {
+        let mut instance = self.workflow_instance(id)?;
+        if is_terminal(instance.status) {
+            return Err(WorkflowError::AlreadyTerminal);
+        }
+        instance.status = status;
+        instance.state = detail.to_vec();
+        instance.wait = None;
+        instance.updated_at_ms = now_ms;
+        self.persist_workflow_with_history(&instance, now_ms, kind, detail)
+    }
+
+    fn persist_workflow_with_history(
+        &mut self,
+        instance: &WorkflowInstance,
+        at_ms: i64,
+        kind: WorkflowHistoryKind,
+        detail: &[u8],
+    ) -> Result<(), WorkflowError> {
+        let sequence = self.next_workflow_history_sequence_tx(&instance.id)?;
+        let history = WorkflowHistoryEntry {
+            sequence,
+            at_ms,
+            kind,
+            detail: detail.to_vec(),
+        };
+        self.put_internal(instance_key(&instance.id), encode_instance(instance)?)?;
+        self.put_internal(
+            history_key(&instance.id, sequence),
+            encode_history(&history)?,
+        )?;
+        Ok(())
+    }
+
+    fn next_workflow_history_sequence_tx(&self, id: &WorkflowId) -> Result<u64, WorkflowError> {
+        let records = self.scan_prefix_internal(history_prefix(id));
+        match records.last() {
+            None => Ok(0),
+            Some((key, _)) => decode_history_sequence(id, key)?
+                .checked_add(1)
+                .ok_or(WorkflowError::HistoryExhausted),
+        }
+    }
+}
+
 fn ensure_active(instance: &WorkflowInstance) -> Result<(), WorkflowError> {
     if is_terminal(instance.status) {
         Err(WorkflowError::AlreadyTerminal)
@@ -658,6 +907,8 @@ mod tests {
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    use crate::JobSpec;
+
     use super::*;
 
     fn temp_store_path(name: &str) -> PathBuf {
@@ -727,6 +978,50 @@ mod tests {
         assert_eq!(children.len(), 1);
         assert_eq!(children[0].id, child);
         drop(store);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn workflow_and_other_domains_share_one_commit() {
+        let path = temp_store_path("transactional");
+        let mut store = Store::open(&path).unwrap();
+        let workflow_id;
+        let job_id;
+        {
+            let mut tx = store.begin().unwrap();
+            tx.put(b"order:42", b"accepted").unwrap();
+            workflow_id = tx
+                .create_workflow(b"order", b"accepted", b"42", None, 10)
+                .unwrap();
+            tx.wait_for_signal(&workflow_id, b"payment", 11).unwrap();
+            job_id = tx
+                .enqueue_job(JobSpec::new(b"request-payment", b"42"), 11)
+                .unwrap();
+            tx.commit().unwrap();
+        }
+        assert_eq!(store.get(b"order:42"), Some(b"accepted".as_slice()));
+        let workflow = store.get_workflow(&workflow_id).unwrap().unwrap();
+        assert_eq!(workflow.status, WorkflowStatus::Waiting);
+        assert_eq!(store.workflow_history(&workflow_id).unwrap().len(), 2);
+        assert!(store.get_job(&job_id).unwrap().is_some());
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn workflow_transaction_rollback_hides_state_and_history() {
+        let path = temp_store_path("transactional-rollback");
+        let mut store = Store::open(&path).unwrap();
+        let workflow_id;
+        {
+            let mut tx = store.begin().unwrap();
+            workflow_id = tx
+                .create_workflow(b"order", b"created", b"42", None, 1)
+                .unwrap();
+            tx.wait_until(&workflow_id, 100, 2).unwrap();
+            tx.rollback().unwrap();
+        }
+        assert!(store.get_workflow(&workflow_id).unwrap().is_none());
+        assert!(store.workflow_history(&workflow_id).unwrap().is_empty());
         let _ = fs::remove_file(path);
     }
 }
