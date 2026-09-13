@@ -50,17 +50,11 @@ impl Store {
     ///
     /// A missing key starts at zero. Existing values must be exactly eight
     /// bytes and are interpreted as a little-endian `i64`.
-    pub fn increment_i64(
-        &mut self,
-        key: impl AsRef<[u8]>,
-        delta: i64,
-    ) -> Result<i64, AtomicError> {
+    pub fn increment_i64(&mut self, key: impl AsRef<[u8]>, delta: i64) -> Result<i64, AtomicError> {
         let key = key.as_ref();
         let current = match self.get(key) {
             Some(bytes) => {
-                let encoded: [u8; 8] = bytes
-                    .try_into()
-                    .map_err(|_| AtomicError::InvalidCounter)?;
+                let encoded: [u8; 8] = bytes.try_into().map_err(|_| AtomicError::InvalidCounter)?;
                 i64::from_le_bytes(encoded)
             }
             None => 0,
