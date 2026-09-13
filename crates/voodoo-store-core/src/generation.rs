@@ -88,7 +88,10 @@ impl Store {
         )
         .encode()?;
 
-        let mut file = OpenOptions::new().read(true).write(true).open(destination)?;
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(destination)?;
         file.seek(SeekFrom::Start(0))?;
         file.write_all(&self.header().encode())?;
         file.seek(SeekFrom::End(0))?;
