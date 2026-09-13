@@ -7,6 +7,10 @@
 
 pub mod engine;
 pub mod log;
+pub mod model;
 
 pub use engine::{EngineError, Store, Transaction};
 pub use log::{LogRecord, RecordKind, StoreError};
+pub use model::{
+    DeliverySemantics, DestinationKind, JobState, MessageEnvelope, ScheduleKind, TraceContext,
+};
