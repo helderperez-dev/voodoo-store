@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use fs2::FileExt;
@@ -11,6 +12,8 @@ use crate::header::{HeaderError, STORE_HEADER_LEN, StoreHeader};
 use crate::log::{HEADER_LEN, LogRecord, RecordKind, StoreError, encoded_record_len_from_prefix};
 
 pub(crate) const INTERNAL_KEY_PREFIX: &[u8] = b"\xffvds:";
+
+static OPEN_WRITERS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Durability {
@@ -58,6 +61,30 @@ enum Operation {
 }
 
 #[derive(Debug)]
+struct ProcessWriterGuard {
+    path: PathBuf,
+}
+
+impl ProcessWriterGuard {
+    fn acquire(path: &Path) -> Result<Self, EngineError> {
+        let path = fs::canonicalize(path)?;
+        let mut writers = open_writers().lock().unwrap_or_else(|error| error.into_inner());
+        if !writers.insert(path.clone()) {
+            return Err(EngineError::AlreadyOpen);
+        }
+        drop(writers);
+        Ok(Self { path })
+    }
+}
+
+impl Drop for ProcessWriterGuard {
+    fn drop(&mut self) {
+        let mut writers = open_writers().lock().unwrap_or_else(|error| error.into_inner());
+        writers.remove(&self.path);
+    }
+}
+
+#[derive(Debug)]
 pub struct Store {
     path: PathBuf,
     file: File,
@@ -66,6 +93,7 @@ pub struct Store {
     state: HashMap<Vec<u8>, Vec<u8>>,
     next_tx_id: u64,
     next_sequence: u64,
+    _process_writer: ProcessWriterGuard,
 }
 
 impl Store {
@@ -85,6 +113,7 @@ impl Store {
             .write(true)
             .open(&path)?;
 
+        let process_writer = ProcessWriterGuard::acquire(&path)?;
         FileExt::try_lock_exclusive(&file).map_err(map_lock_error)?;
         let header = load_or_initialize_header(&mut file)?;
         let recovery = recover(&mut file)?;
@@ -104,6 +133,7 @@ impl Store {
             state: recovery.state,
             next_tx_id: next_counter(recovery.max_tx_id)?,
             next_sequence: next_counter(recovery.max_sequence)?,
+            _process_writer: process_writer,
         })
     }
 
@@ -207,10 +237,20 @@ impl Store {
     pub fn backup_to(&self, destination: impl AsRef<Path>) -> Result<u64, EngineError> {
         self.file.sync_all()?;
         let destination = destination.as_ref();
-        if destination == self.path {
+        if paths_refer_to_same_file(&self.path, destination)? {
             return Err(EngineError::BackupDestinationIsSource);
         }
-        Ok(fs::copy(&self.path, destination)?)
+
+        let mut source = self.file.try_clone()?;
+        source.seek(SeekFrom::Start(0))?;
+        let mut target = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(destination)?;
+        let bytes = io::copy(&mut source, &mut target)?;
+        target.sync_all()?;
+        Ok(bytes)
     }
 
     pub fn begin(&mut self) -> Result<Transaction<'_>, EngineError> {
@@ -334,6 +374,10 @@ struct Recovery {
     pending_transactions: u64,
 }
 
+fn open_writers() -> &'static Mutex<HashSet<PathBuf>> {
+    OPEN_WRITERS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
 fn load_or_initialize_header(file: &mut File) -> Result<StoreHeader, EngineError> {
     let len = file.metadata()?.len();
     if len == 0 {
@@ -433,11 +477,32 @@ fn sync_file(file: &File, durability: Durability) -> Result<(), EngineError> {
 }
 
 fn map_lock_error(error: std::io::Error) -> EngineError {
-    if error.kind() == std::io::ErrorKind::WouldBlock {
+    if is_lock_contention(&error) {
         EngineError::AlreadyOpen
     } else {
         EngineError::Io(error)
     }
+}
+
+fn is_lock_contention(error: &std::io::Error) -> bool {
+    if error.kind() == std::io::ErrorKind::WouldBlock {
+        return true;
+    }
+    #[cfg(windows)]
+    if matches!(error.raw_os_error(), Some(32 | 33)) {
+        return true;
+    }
+    false
+}
+
+fn paths_refer_to_same_file(source: &Path, destination: &Path) -> Result<bool, EngineError> {
+    if source == destination {
+        return Ok(true);
+    }
+    if !destination.exists() {
+        return Ok(false);
+    }
+    Ok(fs::canonicalize(source)? == fs::canonicalize(destination)?)
 }
 
 fn next_counter(max: u64) -> Result<u64, EngineError> {
