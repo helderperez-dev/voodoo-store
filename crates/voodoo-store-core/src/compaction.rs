@@ -24,6 +24,9 @@ impl Store {
     /// identity because both files may coexist safely. A future atomic-replace
     /// operation can preserve identity once platform-specific replacement
     /// semantics are implemented and fault-tested.
+    ///
+    /// Compaction is a maintenance rewrite: it preserves existing CDC records
+    /// but does not generate a second change feed describing the rewrite itself.
     pub fn compact_copy_to(
         &self,
         destination: impl AsRef<Path>,
@@ -51,7 +54,7 @@ impl Store {
         {
             let mut compacted = Store::open(destination)?;
             if !entries.is_empty() {
-                let mut tx = compacted.begin()?;
+                let mut tx = compacted.begin_without_cdc()?;
                 for (key, value) in entries {
                     tx.put_internal(key, value)?;
                 }
@@ -110,10 +113,15 @@ mod tests {
             store.put(b"remove", b"later").unwrap();
             store.delete(b"remove").unwrap();
 
+            let expected_keys = store.len();
+            let expected_changes = store.changes_after(None, usize::MAX).unwrap();
             let report = store.compact_copy_to(&destination).unwrap();
-            assert_eq!(report.keys, 2);
+            assert_eq!(report.keys, expected_keys);
             assert!(report.compacted_bytes < report.source_bytes);
             assert!(report.bytes_reclaimed() > 0);
+
+            let compacted = Store::open(&destination).unwrap();
+            assert_eq!(compacted.changes_after(None, usize::MAX).unwrap(), expected_changes);
         }
 
         let compacted = Store::open(&destination).unwrap();
