@@ -258,12 +258,21 @@ impl Store {
     }
 
     pub fn begin(&mut self) -> Result<Transaction<'_>, EngineError> {
+        self.begin_with_cdc(true)
+    }
+
+    pub(crate) fn begin_without_cdc(&mut self) -> Result<Transaction<'_>, EngineError> {
+        self.begin_with_cdc(false)
+    }
+
+    fn begin_with_cdc(&mut self, emit_cdc: bool) -> Result<Transaction<'_>, EngineError> {
         let tx_id = self.next_tx_id;
         self.next_tx_id = tx_id.checked_add(1).ok_or(EngineError::CounterExhausted)?;
         Ok(Transaction {
             store: self,
             tx_id,
             operations: Vec::new(),
+            emit_cdc,
             finished: false,
         })
     }
@@ -295,6 +304,7 @@ pub struct Transaction<'a> {
     store: &'a mut Store,
     tx_id: u64,
     operations: Vec<Operation>,
+    emit_cdc: bool,
     finished: bool,
 }
 
@@ -360,8 +370,10 @@ impl Transaction<'_> {
 
     pub fn commit(mut self) -> Result<(), EngineError> {
         self.ensure_open()?;
-        let committed_operations = self.operations.clone();
-        crate::cdc::stage_changes(&mut self, &committed_operations)?;
+        if self.emit_cdc {
+            let committed_operations = self.operations.clone();
+            crate::cdc::stage_changes(&mut self, &committed_operations)?;
+        }
         self.store
             .append(RecordKind::Commit, self.tx_id, Vec::new())?;
         sync_file(&self.store.file, self.store.options.durability)?;
