@@ -10,6 +10,7 @@ from ._native import (
     StoreClosedError,
     Transaction,
     TransactionFinishedError,
+    VerificationReport,
     VoodooStoreError,
 )
 
@@ -23,6 +24,7 @@ __all__ = [
     "StoreClosedError",
     "Transaction",
     "TransactionFinishedError",
+    "VerificationReport",
     "VoodooStoreError",
 ]
 
