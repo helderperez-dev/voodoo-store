@@ -2,9 +2,9 @@
 
 The roadmap is intentionally bottom-up. Features that depend on durability, ordering, or transactions do not advance until the layer below has crash/fault coverage.
 
-## Current release target — v0.1 functional embedded core
+## Current release target — v0.1 functional embedded application-state engine
 
-The first functional release is intentionally narrower than the full Voodoo Store vision. It establishes a standalone engine that can already persist application state and run durable background queues without an external service.
+Voodoo Store is already beyond a KV/queue prototype. The current single-node engine persists structured data, background work, scheduling, messaging, objects and workflow state in one `.vstore` without requiring external infrastructure.
 
 Implemented today:
 
@@ -12,110 +12,121 @@ Implemented today:
 - [x] checksummed append-only log
 - [x] atomic transactions and deterministic recovery
 - [x] torn-tail detection and repair
-- [x] single-writer locking across supported desktop/server targets
+- [x] single-writer locking across Linux/macOS/Windows
 - [x] explicit durability modes
 - [x] transactional KV + prefix scan
 - [x] protected engine-internal mutation namespace
-- [x] atomic compare-and-swap and signed counters
-- [x] verify, physical backup, verified restore-copy and compact-copy primitives
-- [x] durable queue with lease, delayed delivery, priority, nack/retry and dead-letter state
-- [x] stale-ACK protection through lease generations
+- [x] compare-and-swap, signed counters and TTL
+- [x] verify, backup, restore-copy, compact-copy and logical snapshot primitives
+- [x] collections with schema-version/codec metadata and secondary/unique indexes
+- [x] durable queues, jobs, one-shot/interval schedules and cron schedules
+- [x] durable triggers routing into Jobs
+- [x] topics, streams, durable subscriptions and replay
+- [x] content-addressed object storage with deduplication, verification and orphan GC
+- [x] durable workflow state with signals, timers, waits and history
+- [x] storage/namespace health accounting
+- [x] first typed cross-domain transaction primitive (`KV + Job` in one commit)
 - [x] standalone CLI
-- [x] initial C ABI
+- [x] C ABI v2 foundation with transactions, errors and panic containment
 - [x] deterministic torn-write, corruption and process-crash tests
-- [x] formatting + Clippy + workspace tests in CI
-- [x] Linux, macOS, Windows and Rust 1.85 MSRV CI coverage
+- [x] Format + Clippy + Linux/macOS/Windows + Rust 1.85 CI
 
-The remaining items below move the engine from a functional embedded core toward the broader goal: Voodoo + Voodoo Store as a zero-required-infrastructure application platform.
+The remaining work moves this single-node engine from broad functional coverage toward a hardened 1.0 and later distributed operation.
 
 ## M0 — Durable log and recovery
 
 Goal: establish the byte-level source of truth.
 
 - [x] Rust workspace
-- [x] first record format
-- [x] CRC validation
-- [x] encode/decode tests
-- [x] append-only writer
-- [x] log scanner
+- [x] record format + CRC
+- [x] append-only writer and scanner
 - [x] transaction commit recovery
-- [x] basic KV API
-- [x] Rust public API
-- [x] initial C ABI
-- [x] correctness invariants
-- [x] torn-write recovery tests
-- [x] explicit fsync/sync policy
+- [x] explicit durability policy
 - [x] file locking and single-writer enforcement
-- [x] store header / store identity / format negotiation
+- [x] format header / store identity / compatibility baseline
 - [x] corruption surfaced rather than silently accepted in the durable prefix
-- [x] deterministic process-crash failure-injection harness
-- [x] deterministic byte-mutation and truncation sweeps for header/record decoding
-- [ ] fuzz record decoder and recovery scanner
-- [x] MSRV CI lane
-- [x] cross-platform CI lane for Linux/macOS/Windows
+- [x] deterministic torn-write and process-crash harness
+- [x] deterministic byte-mutation/truncation sweeps
+- [x] MSRV 1.85 CI
+- [x] Linux/macOS/Windows CI
+- [ ] continuous fuzzing of decoder/recovery scanner
+- [ ] long-running durability soak tests
 
 ## M1 — Embedded KV and storage lifecycle
 
 Goal: make the durable core efficient and operationally safe.
 
-- [x] canonical byte-oriented key/value payload format v1
+- [x] canonical byte-oriented KV format
 - [x] in-memory index rebuilt from log
 - [x] prefix scans
-- [x] consistent physical backup
-- [x] verify / inspect foundation
-- [x] protected internal/user mutation namespaces
-- [x] atomic compare-and-swap
-- [x] atomic counters
-- [ ] TTL semantics
-- [ ] snapshots/checkpoints
+- [x] protected user/internal namespaces
+- [x] CAS and signed counters
+- [x] TTL semantics and expiration purge
+- [x] physical backup
+- [x] verified create-only restore
+- [x] verified compact-copy
+- [x] logical create-only snapshots
+- [x] storage accounting and amplification reporting
+- [ ] identity-preserving checkpoints
 - [ ] log generations
-- [x] safe verified compact-copy generation
-- [ ] atomic in-place cross-platform compaction / generation replacement
-- [x] verified create-only restore workflow
+- [ ] atomic in-place cross-platform generation replacement / compaction
 - [ ] repair tooling beyond torn-tail repair
-- [ ] quotas and storage accounting
-- [ ] benchmark harness
+- [ ] quotas / per-namespace limits
+- [ ] benchmark harness and performance budgets
 
 ## M2 — Collections, schema, indexes and query
 
 Goal: structured application data without making SQL the internal architecture.
 
-- [ ] collection metadata
-- [ ] typed/schema-aware values through explicit codecs
-- [ ] schema versioning and migrations
-- [ ] primary keys
-- [ ] secondary indexes
-- [ ] composite / unique indexes
+- [x] collection metadata
+- [x] explicit codec metadata
+- [x] schema-version baseline
+- [x] primary keys
+- [x] secondary indexes
+- [x] unique indexes
+- [x] exact secondary-index lookup
+- [ ] migration/evolution tooling
 - [ ] iterators and range scans
-- [ ] query primitives
+- [ ] composite indexes
+- [ ] query expressions and projections
 - [ ] query planner baseline
 - [ ] full-text index prototype
-- [ ] change-set generation for committed mutations
+- [ ] committed change-set metadata / CDC integration
 
-## M3 — Jobs, queues and time
+## M3 — Jobs, queues, time and triggers
 
 Goal: durable background work and scheduling without external infrastructure.
 
-- [x] queue namespaces
+Queues:
+
 - [x] push / claim / ack / nack
 - [x] leases and lease expiry
 - [x] delayed delivery
 - [x] priorities
-- [x] durable retry through nack/requeue
-- [x] dead-letter state
+- [x] durable retry and dead state
 - [x] stale-ACK rejection
-- [x] queue stats and dead-message purge
-- [ ] canonical globally unique message/job identifiers
-- [ ] idempotency keys
-- [ ] configurable max-attempt and backoff policies
-- [ ] dedicated jobs abstraction over queues
-- [ ] one-shot schedules
-- [ ] recurring schedules
-- [ ] cron expressions
-- [ ] durable execution history
-- [ ] trigger metadata and trigger-to-job routing
-- [ ] deadlines and timeout metadata
-- [ ] transaction API that can atomically mutate application data and enqueue work in one commit
+- [x] queue statistics and dead-message purge
+
+Jobs and time:
+
+- [x] dedicated durable Jobs abstraction
+- [x] 128-bit job identifiers
+- [x] job idempotency keys
+- [x] attempts, retry/backoff, leases and deadlines
+- [x] durable execution history
+- [x] one-shot schedules
+- [x] interval schedules
+- [x] five-field UTC cron parser (`*`, lists, ranges, steps)
+- [x] durable cron schedules with occurrence idempotency
+- [x] trigger definitions and trigger-to-job routing
+- [x] atomic job state + history transitions
+- [x] atomic one-shot/interval schedule fire + schedule advance
+- [x] first cross-domain transaction API: application KV mutation + Job enqueue in one commit
+- [ ] remove duplicate Job wire encoding from transactional helper by centralizing internal codec
+- [ ] extend cross-domain transactions to Queue / Stream / Topic / Object references
+- [ ] trigger firing fully transactional with trigger metadata update
+- [ ] richer retry policies and jitter
+- [ ] timezone-aware cron as an optional layer (core remains deterministic UTC)
 
 ## M4 — Messaging, streams and reactive feeds
 
@@ -123,16 +134,17 @@ Goal: support decoupled communication, replay and live state.
 
 - [x] language-neutral message envelope model
 - [x] delivery-semantics model
-- [x] correlation / causation / execution / trace identifier model
+- [x] correlation / causation / execution / trace IDs
 - [x] partition-key model
-- [ ] topics / publish-subscribe
-- [ ] durable subscriptions
-- [ ] append-only streams
-- [ ] stream offsets/cursors
-- [ ] consumer groups
-- [ ] replay
+- [x] topics / publish-subscribe baseline
+- [x] durable subscriptions/cursors
+- [x] append-only streams
+- [x] stream offsets
+- [x] replay
+- [ ] consumer groups with ownership/leases
 - [ ] request/reply implementation
-- [ ] change data capture
+- [ ] RPC correlation helpers
+- [ ] change data capture from committed transactions
 - [ ] change feeds
 - [ ] live-query invalidation/deltas
 - [ ] watcher/subscription API
@@ -141,28 +153,31 @@ Goal: support decoupled communication, replay and live state.
 
 Goal: embedded object/blob storage with transaction-aware references.
 
-- [ ] content-addressed blobs
-- [ ] SHA-256 object identity
+- [x] content-addressed blobs
+- [x] SHA-256 object identity
+- [x] deduplication
+- [x] integrity verification
+- [x] object references
+- [x] orphan detection / garbage collection
 - [ ] streaming writes/reads
-- [ ] object metadata
-- [ ] deduplication
-- [ ] integrity verification
-- [ ] object lifecycle policies
-- [ ] transactional object references
-- [ ] orphan detection / garbage collection
+- [ ] richer object metadata
+- [ ] retention/lifecycle policies
+- [ ] object-reference operations inside public cross-domain transactions
 
 ## M6 — Durable workflow state
 
 Goal: persist orchestration state without turning Store into a code executor.
 
-- [ ] workflow instance state
-- [ ] step history
-- [ ] durable timers
-- [ ] signals
-- [ ] waiting states
-- [ ] compensation metadata
-- [ ] parent/child execution identifiers
-- [ ] restart/resume semantics
+- [x] workflow instance state
+- [x] current step/state payload
+- [x] step/history log
+- [x] durable timers
+- [x] signals / HITL waits
+- [x] waiting states and resume
+- [x] parent/child correlation
+- [x] restart/reopen semantics
+- [ ] compensation metadata/policies
+- [ ] workflow operations integrated with the public cross-domain transaction surface
 
 The workflow executor remains outside Voodoo Store.
 
@@ -170,65 +185,65 @@ The workflow executor remains outside Voodoo Store.
 
 Goal: make Store safe to operate as embedded infrastructure.
 
-- [ ] encryption-at-rest design
-- [ ] key-rotation metadata
-- [ ] namespaces and capability metadata
-- [ ] structured health API
-- [ ] transaction/read/write metrics
+- [x] reserved internal namespaces
+- [x] strong store identity from OS entropy
+- [x] structured health API
+- [x] storage and namespace accounting
+- [x] queue state statistics
+- [x] CLI inspection and operation surface
+- [x] CLI verify / backup / restore / compaction / snapshot commands
+- [x] CLI Collections / Queue / Messaging / Objects / Jobs / Scheduler / Cron / Trigger / Workflow operations
+- [ ] encryption-at-rest design and key rotation metadata
+- [ ] namespace capability metadata
+- [ ] transaction/read/write counters and latency metrics
 - [ ] fsync latency metrics
-- [x] queue depth/state statistics
-- [ ] oldest-work metrics
-- [ ] consumer lag
-- [ ] compaction backlog
+- [ ] oldest-work / consumer-lag metrics
+- [ ] compaction backlog metrics
 - [ ] tracing hooks
-- [x] CLI inspection and operation foundation
-- [x] CLI verify / backup / restore-copy / compact-copy lifecycle commands
+- [ ] quotas
 
 ## M7.5 — Voodoo Store Studio
 
 Goal: provide a first-class local visual administration experience for every major Store primitive.
 
-The Studio is a local web application started by the Store CLI and later exposed through the main Voodoo CLI. It must operate directly against Voodoo Store APIs rather than introducing a second storage model.
+Principle: if Voodoo Store replaces multiple infrastructure services, Studio should replace the multiple dashboards normally required to operate them.
 
 Planned command surface:
 
 - [ ] `voodoo-store studio app.vstore`
-- [ ] `voodoo store studio` from a Voodoo project, with automatic store discovery
-- [ ] configurable local port and `--no-open` mode
-- [ ] read-only mode for safe inspection
-- [ ] explicit opt-in for destructive mutations
+- [ ] `voodoo store studio` with automatic project-store discovery
+- [ ] configurable local port and `--no-open`
+- [ ] read-only mode
+- [ ] explicit capability gate for destructive mutations
 
-Planned visual surfaces:
+Planned surfaces:
 
-- [ ] Overview: store identity, format version, size, durability mode, health and recovery status
-- [ ] Data: collections/models, KV namespaces, filtering, sorting and record editing
-- [ ] Schema: fields, indexes, migrations and relationships
-- [ ] Queues: depth, ready/leased/dead messages, payload inspection, retry, nack and purge
-- [ ] Jobs: status, attempts, execution history, retry policy and manual re-run
-- [ ] Scheduler: one-shot jobs, recurring schedules and cron timeline
-- [ ] Messaging: topics, subscriptions, streams, offsets and replay
-- [ ] Objects: blob metadata, size, references, integrity and lifecycle state
-- [ ] Workflows: durable instances, current step, waits, timers, signals and history
-- [ ] Operations: verify, backup, restore, compaction, retention and storage accounting
-- [ ] Observability: recent transactions, traces, queue latency, consumer lag and health metrics
+- [ ] Overview / health / storage
+- [ ] KV / Collections / Schema / Indexes
+- [ ] Queues / Jobs / Scheduler / Cron / Triggers
+- [ ] Topics / Streams / Subscriptions
+- [ ] Objects
+- [ ] Workflows / signals / timers / history
+- [ ] Backup / restore / compaction / snapshots
+- [ ] Observability
 
 Architecture requirements:
 
-- [ ] Studio UI remains a separate consumer of stable Store APIs
-- [ ] no business logic duplicated between CLI and Studio
+- [ ] Studio is a separate consumer of stable Store APIs
+- [ ] Studio is built with Voodoo when the framework capability is mature enough
+- [ ] Store core never depends on Voodoo
 - [ ] localhost-only by default
-- [ ] mutation APIs protected by explicit capability boundaries
-- [ ] future remote mode must require authentication and must not weaken the local embedded security model
-- [ ] design system aligned with the broader Voodoo visual language so the same shell can later power Runtime/Builder tooling
+- [ ] remote mode requires authentication/capabilities
+- [ ] no business logic duplicated between CLI and Studio
 
 ## M8 — Sync, replication and Voodoo Protocol
 
 Goal: connect correct local stores safely.
 
+- [x] cryptographically strong store identity
 - [ ] replication protocol specification
-- [x] cryptographically strong store identity generation from OS entropy
-- [ ] canonical node identity for distributed deployments
-- [ ] log shipping / logical change shipping
+- [ ] canonical node identity
+- [ ] logical change shipping / log shipping
 - [ ] replica checkpoints
 - [ ] offline/online synchronization
 - [ ] conflict model
@@ -239,44 +254,46 @@ Goal: connect correct local stores safely.
 
 ## Ecosystem integration milestones
 
-These do not change core semantics; they validate portability and make Voodoo Store the default infrastructure substrate of the Voodoo ecosystem.
-
 - [x] Rust API
-- [x] C ABI foundation
+- [x] C ABI v2 foundation
+- [x] C ABI transactions and `last_error`
 - [x] standalone CLI
-- [ ] C ABI transactions and queue API
-- [ ] Voodoo Framework adapter replacing SQLite/local defaults where appropriate
+- [ ] complete C ABI coverage for Queue / Collections / Jobs / Streams / Objects / Workflows
 - [ ] Python binding package
 - [ ] Node.js binding package
 - [ ] Go binding
 - [ ] Swift binding
 - [ ] Java/.NET compatibility proof
 - [ ] cross-language compatibility fixtures for the same `.vstore`
-- [ ] Voodoo Store Studio local web application
-- [ ] main `voodoo` CLI integration for Store Studio and operational commands
+- [ ] Voodoo Framework adapter
+- [ ] Voodoo Store Studio
+- [ ] main `voodoo` CLI integration
 
 ## Zero External Infrastructure milestone
 
-Voodoo + Voodoo Store reaches the product North Star when a normal application can use all of the following without a required external service:
+A normal single-node Voodoo application should be able to use the following with no required external service:
 
-- [x] durable KV/application state foundation
-- [x] durable background queue foundation
-- [ ] persistent collections/models and indexes
-- [ ] cache/TTL primitives
-- [ ] jobs and workers
-- [ ] scheduler / delayed jobs / cron
-- [ ] events / topics / streams
-- [ ] object/blob storage
-- [ ] durable execution and HITL waiting state
-- [ ] workflow persistence
-- [x] operational inspect/backup/verify/restore-copy/compact-copy tooling
-- [ ] visual local administration through Voodoo Store Studio
+- [x] durable KV / application state
+- [x] cache / TTL
+- [x] collections and indexes
+- [x] queues
+- [x] durable jobs
+- [x] delayed / recurring / cron scheduling
+- [x] triggers
+- [x] topics / streams / replay
+- [x] object/blob storage baseline
+- [x] durable HITL waiting state
+- [x] workflow persistence
+- [x] operational health / verify / backup / restore / compact-copy / snapshot tooling
+- [ ] full cross-domain transactional surface for all primitives
+- [ ] CDC/live feeds
+- [ ] visual administration through Store Studio
 
-External providers can remain optional adapters for workloads that outgrow the embedded deployment model.
+External providers remain optional adapters for workloads that outgrow the embedded deployment model.
 
 ## Explicitly deferred
 
-These remain out of scope until the single-node engine is demonstrably correct:
+These remain out of scope until the single-node engine is demonstrably production-ready:
 
 - generic globally distributed multi-writer consensus
 - global transactions
