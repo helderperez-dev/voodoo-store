@@ -1,9 +1,9 @@
 //! Verified logical snapshots for Voodoo Store.
 //!
 //! A snapshot is a create-only compact representation of the currently visible
-//! committed state. It preserves the store identity and is verified before the
-//! operation succeeds. In-place generation replacement remains a separate
-//! lifecycle primitive.
+//! committed state. It is an independent store and therefore receives its own
+//! store identity. Identity-preserving checkpoints belong to the future log
+//! generation/replacement mechanism.
 
 use std::path::{Path, PathBuf};
 
@@ -14,7 +14,8 @@ use crate::{CompactionReport, EngineError, Store};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SnapshotReport {
     pub destination: PathBuf,
-    pub store_id: [u8; 16],
+    pub source_store_id: [u8; 16],
+    pub snapshot_store_id: [u8; 16],
     pub keys: usize,
     pub source_bytes: u64,
     pub snapshot_bytes: u64,
@@ -26,21 +27,20 @@ impl Store {
         destination: impl AsRef<Path>,
     ) -> Result<SnapshotReport, SnapshotError> {
         let destination = destination.as_ref();
+        let source_store_id = self.header().store_id;
         let CompactionReport {
             source_bytes,
             compacted_bytes,
             keys,
         } = self.compact_copy_to(destination)?;
         let verification = Store::verify(destination)?;
-        if verification.header.store_id != self.header().store_id
-            || verification.keys != keys
-            || verification.has_torn_tail()
-        {
+        if verification.keys != keys || verification.has_torn_tail() {
             return Err(SnapshotError::VerificationFailed);
         }
         Ok(SnapshotReport {
             destination: destination.to_path_buf(),
-            store_id: verification.header.store_id,
+            source_store_id,
+            snapshot_store_id: verification.header.store_id,
             keys,
             source_bytes,
             snapshot_bytes: compacted_bytes,
@@ -52,8 +52,6 @@ impl Store {
 pub enum SnapshotError {
     #[error("store error: {0}")]
     Store(#[from] EngineError),
-    #[error("compaction error: {0}")]
-    Compaction(#[from] crate::compaction::CompactionError),
     #[error("snapshot verification failed")]
     VerificationFailed,
 }
@@ -75,24 +73,27 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_preserves_visible_state_and_store_identity() {
+    fn snapshot_preserves_visible_state_with_independent_identity() {
         let source = temp_path("source");
         let snapshot = temp_path("copy");
-        let store_id;
+        let source_store_id;
+        let snapshot_store_id;
         {
             let mut store = Store::open(&source).unwrap();
-            store_id = store.header().store_id;
+            source_store_id = store.header().store_id;
             store.put(b"a", b"one").unwrap();
             store.put(b"b", b"two").unwrap();
             store.put(b"a", b"three").unwrap();
             let report = store.snapshot_to(&snapshot).unwrap();
-            assert_eq!(report.store_id, store_id);
+            snapshot_store_id = report.snapshot_store_id;
+            assert_eq!(report.source_store_id, source_store_id);
+            assert_ne!(report.snapshot_store_id, source_store_id);
             assert_eq!(report.keys, 2);
             assert!(report.snapshot_bytes <= report.source_bytes);
         }
         {
             let restored = Store::open(&snapshot).unwrap();
-            assert_eq!(restored.header().store_id, store_id);
+            assert_eq!(restored.header().store_id, snapshot_store_id);
             assert_eq!(restored.get(b"a"), Some(b"three".as_slice()));
             assert_eq!(restored.get(b"b"), Some(b"two".as_slice()));
         }
