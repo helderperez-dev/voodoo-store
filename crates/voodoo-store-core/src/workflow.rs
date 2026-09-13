@@ -685,11 +685,7 @@ mod tests {
                 store.get_workflow(&id).unwrap().unwrap().status,
                 WorkflowStatus::Waiting
             );
-            assert!(
-                store
-                    .signal_workflow(&id, b"approved", b"yes", 2)
-                    .unwrap()
-            );
+            assert!(store.signal_workflow(&id, b"approved", b"yes", 2).unwrap());
             let instance = store.get_workflow(&id).unwrap().unwrap();
             assert_eq!(instance.status, WorkflowStatus::Running);
             assert_eq!(instance.state, b"yes");
