@@ -18,6 +18,7 @@ pub mod messaging;
 pub mod model;
 pub mod objects;
 pub mod operations;
+pub mod outbox;
 pub mod queue;
 pub mod restore;
 pub mod snapshot;
@@ -46,6 +47,7 @@ pub use model::{
 };
 pub use objects::{ObjectError, ObjectGcReport, ObjectId, ObjectInfo};
 pub use operations::{HealthReport, NamespaceStats, OperationsError, StorageStats};
+pub use outbox::{OutboxError, OutboxEvent, OutboxEventId};
 pub use queue::{PushOptions, Queue, QueueError, QueueMessage, QueueState, QueueStats};
 pub use restore::RestoreReport;
 pub use snapshot::{SnapshotError, SnapshotReport};
