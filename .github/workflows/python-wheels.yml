@@ -2,13 +2,111 @@ name: Python Release
 
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - "python-v*"
+    inputs:
+      version:
+        description: "Version to publish (for example: 0.1.0)"
+        required: true
+        type: string
+        default: "0.1.0"
+
+permissions:
+  contents: read
 
 jobs:
+  validate:
+    name: validate release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate branch and version
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_REF: ${{ github.ref }}
+        run: |
+          python - <<'PY'
+          import os
+          import pathlib
+          import re
+          import tomllib
+
+          version = os.environ["RELEASE_VERSION"].strip()
+          ref = os.environ["RELEASE_REF"]
+
+          if ref != "refs/heads/main":
+              raise SystemExit(f"Releases must run from main, got {ref}")
+
+          if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:[a-zA-Z0-9.-]+)?", version):
+              raise SystemExit(f"Invalid release version: {version}")
+
+          pyproject = tomllib.loads(pathlib.Path("pyproject.toml").read_text())
+          python_version = pyproject["project"]["version"]
+
+          cargo = tomllib.loads(
+              pathlib.Path("crates/voodoo-store-python/Cargo.toml").read_text()
+          )
+          cargo_version = cargo["package"]["version"]
+
+          init_text = pathlib.Path("python/voodoo_store/__init__.py").read_text()
+          match = re.search(r'^__version__\s*=\s*["\']([^"\']+)["\']', init_text, re.MULTILINE)
+          if not match:
+              raise SystemExit("Could not find __version__ in python/voodoo_store/__init__.py")
+          module_version = match.group(1)
+
+          versions = {
+              "workflow input": version,
+              "pyproject.toml": python_version,
+              "Python binding Cargo.toml": cargo_version,
+              "voodoo_store.__version__": module_version,
+          }
+
+          for source, value in versions.items():
+              print(f"{source}: {value}")
+              if value != version:
+                  raise SystemExit(
+                      f"Version mismatch: {source} has {value}, expected {version}"
+                  )
+          PY
+
+      - name: Ensure release does not already exist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          if gh release view "python-v${RELEASE_VERSION}" >/dev/null 2>&1; then
+            echo "Release python-v${RELEASE_VERSION} already exists."
+            exit 1
+          fi
+
+  quality:
+    name: quality and core tests
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Test Rust workspace
+        run: cargo test --workspace
+
   wheels:
     name: wheel (${{ matrix.name }})
+    needs: [validate, quality]
     strategy:
       fail-fast: false
       matrix:
@@ -38,6 +136,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -49,6 +148,18 @@ jobs:
           args: --release --out dist
           manylinux: ${{ matrix.manylinux }}
 
+      - name: Install built wheel
+        run: >-
+          python -c "import glob, subprocess, sys;
+          wheels = glob.glob('dist/*.whl');
+          assert len(wheels) == 1, wheels;
+          subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--force-reinstall', wheels[0]])"
+
+      - name: Test installed wheel
+        run: |
+          python -m pip install pytest
+          python -m pytest -q python/tests
+
       - name: Upload wheel
         uses: actions/upload-artifact@v4
         with:
@@ -58,16 +169,20 @@ jobs:
 
   sdist:
     name: source distribution
+    needs: [validate, quality]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
       - name: Build source distribution
         run: |
           python -m pip install "maturin>=1.9,<2"
           maturin sdist --out dist
+
       - name: Upload source distribution
         uses: actions/upload-artifact@v4
         with:
@@ -77,14 +192,14 @@ jobs:
 
   publish:
     name: publish to PyPI
-    if: startsWith(github.ref, 'refs/tags/python-v')
-    needs: [wheels, sdist]
+    needs: [validate, quality, wheels, sdist]
     runs-on: ubuntu-latest
     environment:
       name: pypi
       url: https://pypi.org/project/voodoo-store/
     permissions:
       id-token: write
+      contents: read
 
     steps:
       - name: Download distributions
@@ -94,5 +209,30 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: Show distributions
+        run: ls -lh dist
+
       - name: Publish package distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+
+  release:
+    name: tag and GitHub release
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create GitHub release and tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          TARGET_SHA: ${{ github.sha }}
+        run: |
+          gh release create "python-v${RELEASE_VERSION}" \
+            --target "${TARGET_SHA}" \
+            --title "Voodoo Store Python v${RELEASE_VERSION}" \
+            --generate-notes
