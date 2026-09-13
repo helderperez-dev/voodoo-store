@@ -63,6 +63,13 @@ fn run() -> Result<(), Box<dyn Error>> {
             let bytes = store.backup_to(&args[3])?;
             println!("backup_bytes={bytes}");
         }
+        "restore-copy" => {
+            require_len(&args, 4)?;
+            let report = Store::restore_copy(&args[2], &args[3])?;
+            println!("restore_bytes={}", report.bytes);
+            println!("store_id={}", hex(&report.store_id));
+            println!("keys={}", report.keys);
+        }
         "compact-copy" => {
             require_len(&args, 4)?;
             let store = Store::open(&args[2])?;
@@ -188,6 +195,7 @@ fn print_usage() {
            voodoo-store delete <store> <key>\n\
            voodoo-store verify <store>\n\
            voodoo-store backup <store> <destination>\n\
+           voodoo-store restore-copy <source> <destination>\n\
            voodoo-store compact-copy <store> <destination>\n\
          \n\
          Queue:\n\
