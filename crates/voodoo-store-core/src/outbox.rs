@@ -228,8 +228,6 @@ mod tests {
 
     use crate::{JobSpec, Store};
 
-    use super::*;
-
     fn temp_store_path(name: &str) -> PathBuf {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
