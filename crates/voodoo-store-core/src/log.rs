@@ -1,8 +1,8 @@
 use crc32fast::Hasher;
 use thiserror::Error;
 
-const MAGIC: [u8; 4] = *b"VDS1";
-const HEADER_LEN: usize = 4 + 1 + 8 + 8 + 4;
+pub(crate) const MAGIC: [u8; 4] = *b"VDS1";
+pub(crate) const HEADER_LEN: usize = 4 + 1 + 8 + 8 + 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -103,6 +103,20 @@ impl LogRecord {
             payload: bytes[HEADER_LEN..checksum_offset].to_vec(),
         })
     }
+}
+
+pub(crate) fn encoded_record_len_from_prefix(bytes: &[u8]) -> Result<usize, StoreError> {
+    if bytes.len() < HEADER_LEN {
+        return Err(StoreError::TruncatedRecord);
+    }
+    if bytes[0..4] != MAGIC {
+        return Err(StoreError::InvalidMagic);
+    }
+    let payload_len = u32::from_le_bytes(bytes[21..25].try_into().expect("fixed header slice")) as usize;
+    HEADER_LEN
+        .checked_add(payload_len)
+        .and_then(|len| len.checked_add(4))
+        .ok_or(StoreError::PayloadTooLarge)
 }
 
 fn checksum(bytes: &[u8]) -> u32 {
