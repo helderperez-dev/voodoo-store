@@ -3,6 +3,7 @@ use std::process::ExitCode;
 
 use voodoo_store_core::{
     CollectionDefinition, IndexDefinition, IndexValue, JobSpec, PushOptions, ScheduleMode, Store,
+    TriggerSource,
 };
 
 fn main() -> ExitCode {
@@ -40,41 +41,8 @@ fn run() -> Result<(), Box<dyn Error>> {
             store.delete(args[3].as_bytes())?;
             println!("ok");
         }
-        "health" => {
-            require_len(&args, 3)?;
-            let store = Store::open(&args[2])?;
-            let report = store.health_report()?;
-            println!("store_id={}", hex(&report.store_id));
-            println!("format={}.{}", report.format_major, report.format_minor);
-            println!("file_bytes={}", report.storage.file_bytes);
-            println!("live_keys={}", report.storage.live_keys);
-            println!("user_keys={}", report.storage.user_keys);
-            println!("internal_keys={}", report.storage.internal_keys);
-            println!("live_bytes={}", report.storage.live_bytes());
-            println!("amplification={:.3}", report.storage.amplification_ratio());
-            for namespace in report.namespaces {
-                println!(
-                    "namespace.{}.keys={} namespace.{}.value_bytes={}",
-                    namespace.name, namespace.keys, namespace.name, namespace.value_bytes
-                );
-            }
-        }
-        "verify" => {
-            require_len(&args, 3)?;
-            let report = Store::verify(&args[2])?;
-            println!("store_id={}", hex(&report.header.store_id));
-            println!(
-                "format={}.{}",
-                report.header.format_major, report.header.format_minor
-            );
-            println!("file_bytes={}", report.file_bytes);
-            println!("valid_bytes={}", report.valid_bytes);
-            println!("records={}", report.records);
-            println!("committed_transactions={}", report.committed_transactions);
-            println!("pending_transactions={}", report.pending_transactions);
-            println!("keys={}", report.keys);
-            println!("torn_tail={}", report.has_torn_tail());
-        }
+        "health" => health(&args)?,
+        "verify" => verify(&args)?,
         "backup" => {
             require_len(&args, 4)?;
             let store = Store::open(&args[2])?;
@@ -94,6 +62,16 @@ fn run() -> Result<(), Box<dyn Error>> {
             println!("source_bytes={}", report.source_bytes);
             println!("compacted_bytes={}", report.compacted_bytes);
             println!("bytes_reclaimed={}", report.bytes_reclaimed());
+            println!("keys={}", report.keys);
+        }
+        "snapshot" => {
+            require_len(&args, 4)?;
+            let store = Store::open(&args[2])?;
+            let report = store.snapshot_to(&args[3])?;
+            println!("source_store_id={}", hex(&report.source_store_id));
+            println!("snapshot_store_id={}", hex(&report.snapshot_store_id));
+            println!("source_bytes={}", report.source_bytes);
+            println!("snapshot_bytes={}", report.snapshot_bytes);
             println!("keys={}", report.keys);
         }
         "ttl-put" => {
@@ -124,97 +102,11 @@ fn run() -> Result<(), Box<dyn Error>> {
             println!("expired={}", report.expired);
             println!("removed={}", report.removed);
         }
-        "collection-create" => {
-            if args.len() < 4 || args.len() > 5 {
-                return Err(
-                    "usage: voodoo-store collection-create <store> <collection> [codec]".into(),
-                );
-            }
-            let mut store = Store::open(&args[2])?;
-            let definition = CollectionDefinition {
-                schema_version: 1,
-                codec: args
-                    .get(4)
-                    .map_or(b"bytes".to_vec(), |value| value.as_bytes().to_vec()),
-            };
-            println!(
-                "created={}",
-                store.create_collection(args[3].as_bytes(), &definition)?
-            );
-        }
-        "collection-index" => {
-            if args.len() < 5 || args.len() > 6 {
-                return Err(
-                    "usage: voodoo-store collection-index <store> <collection> <index> [unique]"
-                        .into(),
-                );
-            }
-            let unique = args.get(5).is_some_and(|value| value == "unique");
-            let mut store = Store::open(&args[2])?;
-            println!(
-                "created={}",
-                store.define_index(
-                    args[3].as_bytes(),
-                    &IndexDefinition {
-                        name: args[4].as_bytes().to_vec(),
-                        unique,
-                    },
-                )?
-            );
-        }
-        "collection-put" => {
-            if args.len() < 6 {
-                return Err("usage: voodoo-store collection-put <store> <collection> <pk> <value> [index=value ...]".into());
-            }
-            let indexes = args[6..]
-                .iter()
-                .map(|entry| parse_index_value(entry))
-                .collect::<Result<Vec<_>, _>>()?;
-            let mut store = Store::open(&args[2])?;
-            store.upsert_record(
-                args[3].as_bytes(),
-                args[4].as_bytes(),
-                args[5].as_bytes(),
-                &indexes,
-            )?;
-            println!("ok");
-        }
-        "collection-get" => {
-            require_len(&args, 5)?;
-            let store = Store::open(&args[2])?;
-            match store.get_record(args[3].as_bytes(), args[4].as_bytes())? {
-                Some(record) => {
-                    println!(
-                        "primary_key={}",
-                        String::from_utf8_lossy(&record.primary_key)
-                    );
-                    println!("value={}", String::from_utf8_lossy(&record.value));
-                    for index in record.indexes {
-                        println!(
-                            "index.{}={}",
-                            String::from_utf8_lossy(&index.index),
-                            String::from_utf8_lossy(&index.value)
-                        );
-                    }
-                }
-                None => println!("not-found"),
-            }
-        }
-        "collection-query" => {
-            require_len(&args, 6)?;
-            let store = Store::open(&args[2])?;
-            for record in store.query_index_exact(
-                args[3].as_bytes(),
-                args[4].as_bytes(),
-                args[5].as_bytes(),
-            )? {
-                println!(
-                    "{}\t{}",
-                    String::from_utf8_lossy(&record.primary_key),
-                    String::from_utf8_lossy(&record.value)
-                );
-            }
-        }
+        "collection-create" => collection_create(&args)?,
+        "collection-index" => collection_index(&args)?,
+        "collection-put" => collection_put(&args)?,
+        "collection-get" => collection_get(&args)?,
+        "collection-query" => collection_query(&args)?,
         "collection-delete" => {
             require_len(&args, 5)?;
             let mut store = Store::open(&args[2])?;
@@ -280,8 +172,9 @@ fn run() -> Result<(), Box<dyn Error>> {
             require_len(&args, 6)?;
             let offset: u64 = args[5].parse()?;
             let mut store = Store::open(&args[2])?;
-            let mut topic = store.topic(args[3].as_bytes())?;
-            topic.reset_subscription(args[4].as_bytes(), offset)?;
+            store
+                .topic(args[3].as_bytes())?
+                .reset_subscription(args[4].as_bytes(), offset)?;
             println!("ok");
         }
         "object-put" => {
@@ -329,10 +222,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             require_len(&args, 6)?;
             let now_ms: i64 = args[5].parse()?;
             let mut store = Store::open(&args[2])?;
-            let id = store.submit_job(
-                JobSpec::new(args[3].as_bytes().to_vec(), args[4].as_bytes().to_vec()),
-                now_ms,
-            )?;
+            let id = store.submit_job(job_spec(&args[3], &args[4]), now_ms)?;
             println!("id={}", hex(&id));
         }
         "job-claim" => {
@@ -390,7 +280,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             let first_run_ms: i64 = args[5].parse()?;
             let mut store = Store::open(&args[2])?;
             let id = store.create_schedule(
-                JobSpec::new(args[3].as_bytes().to_vec(), args[4].as_bytes().to_vec()),
+                job_spec(&args[3], &args[4]),
                 ScheduleMode::Once,
                 first_run_ms,
             )?;
@@ -402,7 +292,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             let every_ms: u64 = args[6].parse()?;
             let mut store = Store::open(&args[2])?;
             let id = store.create_schedule(
-                JobSpec::new(args[3].as_bytes().to_vec(), args[4].as_bytes().to_vec()),
+                job_spec(&args[3], &args[4]),
                 ScheduleMode::Interval { every_ms },
                 first_run_ms,
             )?;
@@ -416,6 +306,88 @@ fn run() -> Result<(), Box<dyn Error>> {
             let report = store.tick_schedules(now_ms, limit)?;
             println!("scanned={}", report.scanned);
             println!("fired={}", report.fired);
+        }
+        "cron-create" => {
+            require_len(&args, 7)?;
+            let after_ms: i64 = args[6].parse()?;
+            let mut store = Store::open(&args[2])?;
+            let id = store.create_cron_schedule(
+                &args[3],
+                job_spec(&args[4], &args[5]),
+                after_ms,
+            )?;
+            println!("id={}", hex(&id));
+        }
+        "cron-list" => {
+            require_len(&args, 3)?;
+            let store = Store::open(&args[2])?;
+            for schedule in store.list_cron_schedules()? {
+                println!(
+                    "{}\t{}\t{}\t{}\t{}",
+                    hex(&schedule.id),
+                    String::from_utf8_lossy(&schedule.expression),
+                    schedule.next_run_ms,
+                    schedule.enabled,
+                    schedule.fire_count
+                );
+            }
+        }
+        "cron-enable" => {
+            require_len(&args, 5)?;
+            let id = parse_hex::<16>(&args[3])?;
+            let enabled = parse_bool(&args[4])?;
+            let mut store = Store::open(&args[2])?;
+            println!("updated={}", store.set_cron_schedule_enabled(&id, enabled)?);
+        }
+        "cron-tick" => {
+            require_len(&args, 5)?;
+            let now_ms: i64 = args[3].parse()?;
+            let limit: usize = args[4].parse()?;
+            let mut store = Store::open(&args[2])?;
+            let report = store.tick_cron_schedules(now_ms, limit)?;
+            println!("scanned={}", report.scanned);
+            println!("fired={}", report.fired);
+        }
+        "trigger-create-manual" => {
+            require_len(&args, 6)?;
+            let mut store = Store::open(&args[2])?;
+            let id = store.create_trigger(
+                args[3].as_bytes(),
+                TriggerSource::Manual,
+                job_spec(&args[4], &args[5]),
+            )?;
+            println!("id={}", hex(&id));
+        }
+        "trigger-list" => {
+            require_len(&args, 3)?;
+            let store = Store::open(&args[2])?;
+            for trigger in store.list_triggers()? {
+                println!(
+                    "{}\t{}\t{:?}\t{}\t{}",
+                    hex(&trigger.id),
+                    String::from_utf8_lossy(&trigger.name),
+                    trigger.source,
+                    trigger.enabled,
+                    trigger.fire_count
+                );
+            }
+        }
+        "trigger-enable" => {
+            require_len(&args, 5)?;
+            let id = parse_hex::<16>(&args[3])?;
+            let enabled = parse_bool(&args[4])?;
+            let mut store = Store::open(&args[2])?;
+            println!("updated={}", store.set_trigger_enabled(&id, enabled)?);
+        }
+        "trigger-fire" => {
+            require_len(&args, 6)?;
+            let id = parse_hex::<16>(&args[3])?;
+            let now_ms: i64 = args[5].parse()?;
+            let mut store = Store::open(&args[2])?;
+            match store.fire_trigger(&id, args[4].as_bytes(), now_ms)? {
+                Some(job_id) => println!("job_id={}", hex(&job_id)),
+                None => println!("disabled"),
+            }
         }
         "workflow-create" => {
             require_len(&args, 7)?;
@@ -510,6 +482,145 @@ fn run() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn health(args: &[String]) -> Result<(), Box<dyn Error>> {
+    require_len(args, 3)?;
+    let store = Store::open(&args[2])?;
+    let report = store.health_report()?;
+    println!("store_id={}", hex(&report.store_id));
+    println!("format={}.{}", report.format_major, report.format_minor);
+    println!("file_bytes={}", report.storage.file_bytes);
+    println!("live_keys={}", report.storage.live_keys);
+    println!("user_keys={}", report.storage.user_keys);
+    println!("internal_keys={}", report.storage.internal_keys);
+    println!("live_bytes={}", report.storage.live_bytes());
+    println!("amplification={:.3}", report.storage.amplification_ratio());
+    for namespace in report.namespaces {
+        println!(
+            "namespace.{}.keys={} namespace.{}.value_bytes={}",
+            namespace.name, namespace.keys, namespace.name, namespace.value_bytes
+        );
+    }
+    Ok(())
+}
+
+fn verify(args: &[String]) -> Result<(), Box<dyn Error>> {
+    require_len(args, 3)?;
+    let report = Store::verify(&args[2])?;
+    println!("store_id={}", hex(&report.header.store_id));
+    println!(
+        "format={}.{}",
+        report.header.format_major, report.header.format_minor
+    );
+    println!("file_bytes={}", report.file_bytes);
+    println!("valid_bytes={}", report.valid_bytes);
+    println!("records={}", report.records);
+    println!("committed_transactions={}", report.committed_transactions);
+    println!("pending_transactions={}", report.pending_transactions);
+    println!("keys={}", report.keys);
+    println!("torn_tail={}", report.has_torn_tail());
+    Ok(())
+}
+
+fn collection_create(args: &[String]) -> Result<(), Box<dyn Error>> {
+    if args.len() < 4 || args.len() > 5 {
+        return Err(
+            "usage: voodoo-store collection-create <store> <collection> [codec]".into(),
+        );
+    }
+    let mut store = Store::open(&args[2])?;
+    let definition = CollectionDefinition {
+        schema_version: 1,
+        codec: args
+            .get(4)
+            .map_or(b"bytes".to_vec(), |value| value.as_bytes().to_vec()),
+    };
+    println!(
+        "created={}",
+        store.create_collection(args[3].as_bytes(), &definition)?
+    );
+    Ok(())
+}
+
+fn collection_index(args: &[String]) -> Result<(), Box<dyn Error>> {
+    if args.len() < 5 || args.len() > 6 {
+        return Err(
+            "usage: voodoo-store collection-index <store> <collection> <index> [unique]".into(),
+        );
+    }
+    let unique = args.get(5).is_some_and(|value| value == "unique");
+    let mut store = Store::open(&args[2])?;
+    println!(
+        "created={}",
+        store.define_index(
+            args[3].as_bytes(),
+            &IndexDefinition {
+                name: args[4].as_bytes().to_vec(),
+                unique,
+            },
+        )?
+    );
+    Ok(())
+}
+
+fn collection_put(args: &[String]) -> Result<(), Box<dyn Error>> {
+    if args.len() < 6 {
+        return Err("usage: voodoo-store collection-put <store> <collection> <pk> <value> [index=value ...]".into());
+    }
+    let indexes = args[6..]
+        .iter()
+        .map(|entry| parse_index_value(entry))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut store = Store::open(&args[2])?;
+    store.upsert_record(
+        args[3].as_bytes(),
+        args[4].as_bytes(),
+        args[5].as_bytes(),
+        &indexes,
+    )?;
+    println!("ok");
+    Ok(())
+}
+
+fn collection_get(args: &[String]) -> Result<(), Box<dyn Error>> {
+    require_len(args, 5)?;
+    let store = Store::open(&args[2])?;
+    match store.get_record(args[3].as_bytes(), args[4].as_bytes())? {
+        Some(record) => {
+            println!(
+                "primary_key={}",
+                String::from_utf8_lossy(&record.primary_key)
+            );
+            println!("value={}", String::from_utf8_lossy(&record.value));
+            for index in record.indexes {
+                println!(
+                    "index.{}={}",
+                    String::from_utf8_lossy(&index.index),
+                    String::from_utf8_lossy(&index.value)
+                );
+            }
+        }
+        None => println!("not-found"),
+    }
+    Ok(())
+}
+
+fn collection_query(args: &[String]) -> Result<(), Box<dyn Error>> {
+    require_len(args, 6)?;
+    let store = Store::open(&args[2])?;
+    for record in store.query_index_exact(
+        args[3].as_bytes(),
+        args[4].as_bytes(),
+        args[5].as_bytes(),
+    )? {
+        println!(
+            "{}\t{}",
+            String::from_utf8_lossy(&record.primary_key),
+            String::from_utf8_lossy(&record.value)
+        );
+    }
+    Ok(())
+}
+
 fn queue_push(args: &[String]) -> Result<(), Box<dyn Error>> {
     if args.len() < 5 || args.len() > 7 {
         return Err(
@@ -528,8 +639,7 @@ fn queue_push(args: &[String]) -> Result<(), Box<dyn Error>> {
         .transpose()?
         .unwrap_or(0);
     let mut store = Store::open(&args[2])?;
-    let mut queue = store.queue(args[3].as_bytes())?;
-    let id = queue.push_with_options(
+    let id = store.queue(args[3].as_bytes())?.push_with_options(
         args[4].as_bytes(),
         PushOptions {
             available_at_ms,
@@ -545,8 +655,7 @@ fn queue_claim(args: &[String]) -> Result<(), Box<dyn Error>> {
     let now_ms: i64 = args[4].parse()?;
     let lease_ms: u64 = args[5].parse()?;
     let mut store = Store::open(&args[2])?;
-    let mut queue = store.queue(args[3].as_bytes())?;
-    match queue.claim(now_ms, lease_ms)? {
+    match store.queue(args[3].as_bytes())?.claim(now_ms, lease_ms)? {
         Some(message) => {
             println!("id={}", message.id);
             println!("lease_generation={}", message.lease_generation);
@@ -606,6 +715,10 @@ fn queue_stats(args: &[String]) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn job_spec(handler: &str, payload: &str) -> JobSpec {
+    JobSpec::new(handler.as_bytes().to_vec(), payload.as_bytes().to_vec())
+}
+
 fn parse_index_value(value: &str) -> Result<IndexValue, Box<dyn Error>> {
     let (index, value) = value
         .split_once('=')
@@ -617,6 +730,14 @@ fn parse_index_value(value: &str) -> Result<IndexValue, Box<dyn Error>> {
         index: index.as_bytes().to_vec(),
         value: value.as_bytes().to_vec(),
     })
+}
+
+fn parse_bool(value: &str) -> Result<bool, Box<dyn Error>> {
+    match value {
+        "true" | "1" | "yes" | "on" => Ok(true),
+        "false" | "0" | "no" | "off" => Ok(false),
+        _ => Err("expected boolean: true/false".into()),
+    }
 }
 
 fn require_len(args: &[String], expected: usize) -> Result<(), Box<dyn Error>> {
@@ -660,7 +781,7 @@ fn print_usage() {
     println!(
         "Voodoo Store 0.1\n\
          \n\
-         Core: put get delete health verify backup restore-copy compact-copy\n\
+         Core: put get delete health verify backup restore-copy compact-copy snapshot\n\
          TTL: ttl-put ttl-get-at ttl-clear ttl-purge\n\
          Collections: collection-create collection-index collection-put collection-get collection-query collection-delete\n\
          Queue: queue-push queue-claim queue-ack queue-nack queue-dead queue-stats\n\
@@ -668,6 +789,8 @@ fn print_usage() {
          Objects: object-put object-get object-verify object-link object-unlink object-gc\n\
          Jobs: job-submit job-claim job-complete job-fail job-history\n\
          Scheduler: schedule-once schedule-interval schedule-tick\n\
+         Cron: cron-create cron-list cron-enable cron-tick\n\
+         Triggers: trigger-create-manual trigger-list trigger-enable trigger-fire\n\
          Workflows: workflow-create workflow-get workflow-wait-signal workflow-signal workflow-wait-until workflow-tick workflow-complete workflow-history\n\
          \n\
          Run a command with invalid arguments to see its expected parameters."
