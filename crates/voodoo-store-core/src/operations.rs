@@ -191,7 +191,12 @@ mod tests {
                 .any(|entry| entry.name == "queues" && entry.keys > 0)
         );
         assert!(report.namespaces.iter().any(|entry| entry.name == "cron"));
-        assert!(report.namespaces.iter().any(|entry| entry.name == "triggers"));
+        assert!(
+            report
+                .namespaces
+                .iter()
+                .any(|entry| entry.name == "triggers")
+        );
         drop(store);
         let _ = fs::remove_file(path);
     }
