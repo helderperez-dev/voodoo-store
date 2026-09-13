@@ -8,7 +8,7 @@
 
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
@@ -34,6 +34,10 @@ impl GenerationReport {
 impl Store {
     /// Builds a compact, independently verified generation that keeps this
     /// store's identity. The active source file is never modified or replaced.
+    ///
+    /// Source-log inspection uses a temporary physical image produced through
+    /// `backup_to`. `backup_to` clones the already-open Store file handle, which
+    /// avoids reopening an exclusively locked source pathname on Windows.
     pub fn compact_generation_to(
         &self,
         destination: impl AsRef<Path>,
@@ -45,16 +49,38 @@ impl Store {
         }
 
         reserve_destination(destination)?;
-        let result = self.build_generation(destination);
+        let source_image = match reserve_source_image(destination) {
+            Ok(path) => path,
+            Err(error) => {
+                let _ = fs::remove_file(destination);
+                return Err(error);
+            }
+        };
+
+        let source_bytes = match self.backup_to(&source_image) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                let _ = fs::remove_file(&source_image);
+                let _ = fs::remove_file(destination);
+                return Err(error.into());
+            }
+        };
+
+        let result = self.build_generation(destination, &source_image, source_bytes);
+        let _ = fs::remove_file(&source_image);
         if result.is_err() {
             let _ = fs::remove_file(destination);
         }
         result
     }
 
-    fn build_generation(&self, destination: &Path) -> Result<GenerationReport, GenerationError> {
-        let source_bytes = fs::metadata(self.path())?.len();
-        let (source_max_tx, source_max_sequence) = log_high_water(self.path())?;
+    fn build_generation(
+        &self,
+        destination: &Path,
+        source_image: &Path,
+        source_bytes: u64,
+    ) -> Result<GenerationReport, GenerationError> {
+        let (source_max_tx, source_max_sequence) = log_high_water(source_image)?;
         let entries = self.scan_prefix([]);
         let keys = entries.len();
 
@@ -133,6 +159,30 @@ fn reserve_destination(destination: &Path) -> Result<(), GenerationError> {
         })
 }
 
+fn reserve_source_image(destination: &Path) -> Result<PathBuf, GenerationError> {
+    let parent = destination.parent().unwrap_or_else(|| Path::new("."));
+    let base = destination
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("generation");
+
+    for _ in 0..16 {
+        let mut nonce = [0u8; 8];
+        getrandom::fill(&mut nonce).map_err(|error| GenerationError::Randomness(error.to_string()))?;
+        let suffix = u64::from_le_bytes(nonce);
+        let candidate = parent.join(format!(".{base}.source-{suffix:016x}.tmp"));
+        match OpenOptions::new().write(true).create_new(true).open(&candidate) {
+            Ok(file) => {
+                drop(file);
+                return Ok(candidate);
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(GenerationError::Io(error)),
+        }
+    }
+    Err(GenerationError::TemporaryNameExhausted)
+}
+
 fn log_high_water(path: &Path) -> Result<(u64, u64), GenerationError> {
     let mut file = OpenOptions::new().read(true).open(path)?;
     file.seek(SeekFrom::Start(STORE_HEADER_LEN as u64))?;
@@ -181,6 +231,10 @@ pub enum GenerationError {
     CounterExhausted,
     #[error("generated store failed identity/state verification")]
     VerificationMismatch,
+    #[error("failed to obtain randomness for generation temporary file: {0}")]
+    Randomness(String),
+    #[error("could not reserve a generation temporary file")]
+    TemporaryNameExhausted,
 }
 
 #[cfg(test)]
