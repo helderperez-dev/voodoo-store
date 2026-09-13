@@ -82,3 +82,37 @@ def test_closed_store_is_unusable(tmp_path: Path) -> None:
     store.close()
     with pytest.raises(StoreClosedError):
         store.get(b"key")
+
+
+def test_open_accepts_durability_options(tmp_path: Path) -> None:
+    for durability in ("strict", "data", "relaxed"):
+        path = tmp_path / f"{durability}.vstore"
+        with Store.open(path, durability=durability, repair_torn_tail=False) as store:
+            store.put(b"mode", durability.encode())
+        with Store.open(path) as reopened:
+            assert reopened.get(b"mode") == durability.encode()
+
+
+def test_open_rejects_unknown_durability(tmp_path: Path) -> None:
+    with pytest.raises(ValueError):
+        Store.open(tmp_path / "invalid.vstore", durability="unknown")
+
+
+def test_verify_reports_native_store_metadata(tmp_path: Path) -> None:
+    path = tmp_path / "verify.vstore"
+    with Store.open(path) as store:
+        store.put(b"alpha", b"1")
+        with store.transaction() as tx:
+            tx.put(b"beta", b"2")
+            tx.put(b"gamma", b"3")
+
+    report = Store.verify(path)
+    assert report.file_bytes == report.valid_bytes
+    assert report.records > 0
+    assert report.committed_transactions == 2
+    assert report.pending_transactions == 0
+    assert report.keys >= 3
+    assert report.has_torn_tail is False
+    assert isinstance(report.store_id, bytes)
+    assert len(report.store_id) == 16
+    assert report.store_id != b"\x00" * 16
