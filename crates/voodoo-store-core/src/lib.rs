@@ -6,6 +6,7 @@
 //! semantics remain portable and independently usable.
 
 pub mod atomic;
+pub mod cdc;
 pub mod collection;
 pub mod compaction;
 pub mod consumer_group;
@@ -31,6 +32,7 @@ pub mod ttl;
 pub mod workflow;
 
 pub use atomic::{AtomicError, CasOutcome};
+pub use cdc::{ChangeFeedError, ChangeKind, ChangeRecord};
 pub use collection::{
     CollectionDefinition, CollectionError, CollectionRecord, IndexDefinition, IndexValue,
 };
