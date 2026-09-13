@@ -251,10 +251,9 @@ impl Store {
         let mut job = self.get_job(id)?.ok_or(JobError::NotFound)?;
         validate_job_lease(&job, lease_generation)?;
         job.lease_until_ms = 0;
-        let kind;
-        if job.attempts >= job.max_attempts {
+        let kind = if job.attempts >= job.max_attempts {
             job.state = DurableJobState::Dead;
-            kind = JobHistoryKind::Dead;
+            JobHistoryKind::Dead
         } else {
             let multiplier = u64::from(job.attempts.max(1));
             let delay = job
@@ -264,8 +263,8 @@ impl Store {
             let delay = i64::try_from(delay).map_err(|_| JobError::TimeOverflow)?;
             job.available_at_ms = now_ms.checked_add(delay).ok_or(JobError::TimeOverflow)?;
             job.state = DurableJobState::Ready;
-            kind = JobHistoryKind::RetryScheduled;
-        }
+            JobHistoryKind::RetryScheduled
+        };
         self.persist_job_with_history(&job, now_ms, kind, detail.as_ref())?;
         Ok(job.state)
     }
