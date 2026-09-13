@@ -63,6 +63,15 @@ fn run() -> Result<(), Box<dyn Error>> {
             let bytes = store.backup_to(&args[3])?;
             println!("backup_bytes={bytes}");
         }
+        "compact-copy" => {
+            require_len(&args, 4)?;
+            let store = Store::open(&args[2])?;
+            let report = store.compact_copy_to(&args[3])?;
+            println!("source_bytes={}", report.source_bytes);
+            println!("compacted_bytes={}", report.compacted_bytes);
+            println!("bytes_reclaimed={}", report.bytes_reclaimed());
+            println!("keys={}", report.keys);
+        }
         "queue-push" => {
             if args.len() < 5 || args.len() > 7 {
                 return Err("usage: voodoo-store queue-push <store> <queue> <payload> [available_at_ms] [priority]".into());
@@ -173,12 +182,13 @@ fn print_usage() {
     println!(
         "Voodoo Store 0.1\n\
          \n\
-         KV:\n\
+         KV / lifecycle:\n\
            voodoo-store put <store> <key> <value>\n\
            voodoo-store get <store> <key>\n\
            voodoo-store delete <store> <key>\n\
            voodoo-store verify <store>\n\
            voodoo-store backup <store> <destination>\n\
+           voodoo-store compact-copy <store> <destination>\n\
          \n\
          Queue:\n\
            voodoo-store queue-push <store> <queue> <payload> [available_at_ms] [priority]\n\
