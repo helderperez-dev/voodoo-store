@@ -1,26 +1,10 @@
 use pyo3::prelude::*;
-use pyo3::types::PyBytes;
+use pyo3::types::{PyBytes, PyDict};
 use voodoo_store_core::{
     DurableJob, DurableJobState, JobError, JobHistoryEntry, JobHistoryKind, JobSpec,
 };
 
 use super::{PyStore, VoodooStoreError, with_store, with_store_mut};
-
-type PyJob = (
-    Py<PyBytes>,
-    String,
-    Py<PyBytes>,
-    Py<PyBytes>,
-    i64,
-    Option<i64>,
-    i32,
-    u32,
-    u32,
-    u64,
-    i64,
-    u32,
-    Option<Py<PyBytes>>,
-);
 
 type PyHistory = (u64, i64, String, Py<PyBytes>);
 
@@ -49,24 +33,25 @@ fn history_name(kind: JobHistoryKind) -> &'static str {
     }
 }
 
-fn py_job(py: Python<'_>, job: DurableJob) -> PyJob {
-    (
-        PyBytes::new(py, &job.id).unbind(),
-        state_name(job.state).to_string(),
-        PyBytes::new(py, &job.handler).unbind(),
-        PyBytes::new(py, &job.payload).unbind(),
-        job.available_at_ms,
-        job.deadline_ms,
-        job.priority,
-        job.attempts,
-        job.max_attempts,
-        job.retry_backoff_ms,
-        job.lease_until_ms,
-        job.lease_generation,
-        job.idempotency_key
-            .as_deref()
-            .map(|key| PyBytes::new(py, key).unbind()),
-    )
+fn py_job(py: Python<'_>, job: DurableJob) -> PyResult<Py<PyDict>> {
+    let result = PyDict::new(py);
+    result.set_item("id", PyBytes::new(py, &job.id))?;
+    result.set_item("state", state_name(job.state))?;
+    result.set_item("handler", PyBytes::new(py, &job.handler))?;
+    result.set_item("payload", PyBytes::new(py, &job.payload))?;
+    result.set_item("available_at_ms", job.available_at_ms)?;
+    result.set_item("deadline_ms", job.deadline_ms)?;
+    result.set_item("priority", job.priority)?;
+    result.set_item("attempts", job.attempts)?;
+    result.set_item("max_attempts", job.max_attempts)?;
+    result.set_item("retry_backoff_ms", job.retry_backoff_ms)?;
+    result.set_item("lease_until_ms", job.lease_until_ms)?;
+    result.set_item("lease_generation", job.lease_generation)?;
+    match job.idempotency_key {
+        Some(key) => result.set_item("idempotency_key", PyBytes::new(py, &key))?,
+        None => result.set_item("idempotency_key", py.None())?,
+    }
+    Ok(result.unbind())
 }
 
 fn py_history(py: Python<'_>, entry: JobHistoryEntry) -> PyHistory {
@@ -125,13 +110,14 @@ impl PyStore {
         })
     }
 
-    fn get_job(&self, py: Python<'_>, id: &[u8]) -> PyResult<Option<PyJob>> {
+    fn get_job(&self, py: Python<'_>, id: &[u8]) -> PyResult<Option<Py<PyDict>>> {
         let id = parse_job_id(id)?;
         with_store(&self.slot, |store| {
-            store
-                .get_job(&id)
-                .map(|job| job.map(|job| py_job(py, job)))
-                .map_err(map_job_error)
+            let job = store.get_job(&id).map_err(map_job_error)?;
+            match job {
+                Some(job) => Ok(Some(py_job(py, job)?)),
+                None => Ok(None),
+            }
         })
     }
 
@@ -140,21 +126,19 @@ impl PyStore {
         py: Python<'_>,
         now_ms: i64,
         lease_duration_ms: u64,
-    ) -> PyResult<Option<PyJob>> {
+    ) -> PyResult<Option<Py<PyDict>>> {
         with_store_mut(&self.slot, |store| {
-            store
+            let job = store
                 .claim_job(now_ms, lease_duration_ms)
-                .map(|job| job.map(|job| py_job(py, job)))
-                .map_err(map_job_error)
+                .map_err(map_job_error)?;
+            match job {
+                Some(job) => Ok(Some(py_job(py, job)?)),
+                None => Ok(None),
+            }
         })
     }
 
-    fn complete_job(
-        &self,
-        id: &[u8],
-        lease_generation: u32,
-        now_ms: i64,
-    ) -> PyResult<()> {
+    fn complete_job(&self, id: &[u8], lease_generation: u32, now_ms: i64) -> PyResult<()> {
         let id = parse_job_id(id)?;
         with_store_mut(&self.slot, |store| {
             store
