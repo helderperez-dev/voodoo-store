@@ -43,16 +43,16 @@ fn core_indexes(indexes: Vec<(Vec<u8>, Vec<u8>)>) -> Vec<IndexValue> {
 
 #[pymethods]
 impl PyStore {
-    #[pyo3(signature = (name, *, schema_version = 1, codec = b"bytes"))]
+    #[pyo3(signature = (name, *, schema_version = 1, codec = None))]
     fn create_collection(
         &self,
         name: &[u8],
         schema_version: u32,
-        codec: &[u8],
+        codec: Option<Vec<u8>>,
     ) -> PyResult<bool> {
         let definition = CollectionDefinition {
             schema_version,
-            codec: codec.to_vec(),
+            codec: codec.unwrap_or_else(|| b"bytes".to_vec()),
         };
         with_store_mut(&self.slot, |store| {
             store
