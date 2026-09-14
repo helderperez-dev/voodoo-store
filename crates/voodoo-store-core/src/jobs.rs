@@ -325,12 +325,7 @@ impl Store {
         job.state = DurableJobState::Ready;
         job.available_at_ms = now_ms;
         job.lease_until_ms = 0;
-        self.persist_job_with_history(
-            &job,
-            now_ms,
-            JobHistoryKind::RetryScheduled,
-            b"released",
-        )?;
+        self.persist_job_with_history(&job, now_ms, JobHistoryKind::RetryScheduled, b"released")?;
         Ok(true)
     }
 
@@ -368,11 +363,7 @@ impl Store {
         Ok(count)
     }
 
-    pub fn retry_job(
-        &mut self,
-        id: &JobId,
-        now_ms: i64,
-    ) -> Result<Option<DurableJob>, JobError> {
+    pub fn retry_job(&mut self, id: &JobId, now_ms: i64) -> Result<Option<DurableJob>, JobError> {
         let Some(mut job) = self.get_job(id)? else {
             return Ok(None);
         };
@@ -1058,7 +1049,10 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(claimed.id, report);
-        assert_eq!(store.get_job(&email).unwrap().unwrap().state, DurableJobState::Ready);
+        assert_eq!(
+            store.get_job(&email).unwrap().unwrap().state,
+            DurableJobState::Ready
+        );
         drop(store);
         let _ = fs::remove_file(path);
     }
@@ -1072,19 +1066,25 @@ mod tests {
         let id = store.submit_job(spec, 0).unwrap();
 
         let claimed = store.claim_job(0, 10).unwrap().unwrap();
-        assert!(store
-            .heartbeat_job(&id, claimed.lease_generation, 5, 20)
-            .unwrap());
+        assert!(
+            store
+                .heartbeat_job(&id, claimed.lease_generation, 5, 20)
+                .unwrap()
+        );
         assert_eq!(store.get_job(&id).unwrap().unwrap().lease_until_ms, 25);
-        assert!(store
-            .release_job(&id, claimed.lease_generation, 6)
-            .unwrap());
-        assert_eq!(store.get_job(&id).unwrap().unwrap().state, DurableJobState::Ready);
+        assert!(store.release_job(&id, claimed.lease_generation, 6).unwrap());
+        assert_eq!(
+            store.get_job(&id).unwrap().unwrap().state,
+            DurableJobState::Ready
+        );
 
         let second = store.claim_job(6, 10).unwrap().unwrap();
         assert_eq!(second.attempts, 2);
         assert_eq!(store.release_expired_jobs(16).unwrap(), 1);
-        assert_eq!(store.get_job(&id).unwrap().unwrap().state, DurableJobState::Dead);
+        assert_eq!(
+            store.get_job(&id).unwrap().unwrap().state,
+            DurableJobState::Dead
+        );
 
         let retried = store.retry_job(&id, 20).unwrap().unwrap();
         assert_eq!(retried.state, DurableJobState::Ready);
