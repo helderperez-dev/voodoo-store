@@ -162,7 +162,7 @@ impl PyStore {
     }
 
     fn flush(&self) -> PyResult<()> {
-        with_store(&self.slot, |store| store.flush().map_err(map_engine_error))
+        with_store_mut(&self.slot, |store| store.flush().map_err(map_engine_error))
     }
 
     fn transaction(&self) -> PyResult<PyTransaction> {
@@ -206,6 +206,12 @@ impl PyStore {
 enum PendingOperation {
     Put(Vec<u8>, Vec<u8>),
     Delete(Vec<u8>),
+    UpsertRecord {
+        collection: Vec<u8>,
+        primary_key: Vec<u8>,
+        value: Vec<u8>,
+        indexes: Vec<voodoo_store_core::IndexValue>,
+    },
 }
 
 enum PendingLookup<'a> {
@@ -314,6 +320,15 @@ impl PyTransaction {
                     }
                     PendingOperation::Delete(key) => {
                         tx.delete(key).map_err(map_engine_error)?;
+                    }
+                    PendingOperation::UpsertRecord {
+                        collection,
+                        primary_key,
+                        value,
+                        indexes,
+                    } => {
+                        tx.upsert_record(collection, primary_key, value, indexes)
+                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
                     }
                 }
             }
@@ -475,28 +490,17 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyStore>()?;
     module.add_class::<PyTransaction>()?;
     module.add_class::<PyVerificationReport>()?;
-    module.add(
-        "VoodooStoreError",
-        module.py().get_type::<VoodooStoreError>(),
-    )?;
-    module.add(
-        "StoreClosedError",
-        module.py().get_type::<StoreClosedError>(),
-    )?;
+    module.add("VoodooStoreError", module.py().get_type::<VoodooStoreError>())?;
+    module.add("StoreClosedError", module.py().get_type::<StoreClosedError>())?;
     module.add("StoreBusyError", module.py().get_type::<StoreBusyError>())?;
-    module.add(
-        "AlreadyOpenError",
-        module.py().get_type::<AlreadyOpenError>(),
-    )?;
-    module.add(
-        "ReservedKeyError",
-        module.py().get_type::<ReservedKeyError>(),
-    )?;
+    module.add("AlreadyOpenError", module.py().get_type::<AlreadyOpenError>())?;
+    module.add("ReservedKeyError", module.py().get_type::<ReservedKeyError>())?;
     module.add(
         "TransactionFinishedError",
         module.py().get_type::<TransactionFinishedError>(),
     )?;
     module.add("CorruptionError", module.py().get_type::<CorruptionError>())?;
     module.add("IoError", module.py().get_type::<IoError>())?;
+    module.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }

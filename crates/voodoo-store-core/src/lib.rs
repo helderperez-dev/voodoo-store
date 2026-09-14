@@ -53,8 +53,8 @@ pub use engine::{Durability, EngineError, Store, StoreOptions, Transaction, Veri
 pub use generation::{GenerationError, GenerationReport};
 pub use header::{FORMAT_MAJOR, FORMAT_MINOR, HeaderError, STORE_HEADER_LEN, StoreHeader};
 pub use jobs::{
-    DurableJob, DurableJobState, DurableSchedule, JobError, JobHistoryEntry, JobHistoryKind, JobId,
-    JobSpec, ScheduleId, ScheduleMode, SchedulerTickReport,
+    DurableJob, DurableJobState, DurableJobStats, DurableSchedule, JobError, JobHistoryEntry,
+    JobHistoryKind, JobId, JobSpec, ScheduleId, ScheduleMode, SchedulerTickReport,
 };
 pub use log::{LogRecord, RecordKind, StoreError};
 pub use messaging::{MessagingError, Stream, StreamEntry, SubscriptionState, Topic};

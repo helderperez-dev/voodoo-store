@@ -1,6 +1,6 @@
 [package]
 name = "voodoo-store-python"
-version = "0.1.1"
+version = "0.2.0"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -9,8 +9,9 @@ publish = false
 
 [lib]
 name = "_native"
+path = "src/binding.rs"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.28", features = ["extension-module", "abi3-py39"] }
+pyo3 = { version = "0.28", features = ["extension-module", "abi3-py39", "multiple-pymethods"] }
 voodoo-store-core = { path = "../voodoo-store-core" }
