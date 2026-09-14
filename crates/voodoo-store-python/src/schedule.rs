@@ -1,8 +1,8 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
 use voodoo_store_core::{
-    CronSchedulerError, DurableCronSchedule, DurableSchedule, DurableTrigger, JobSpec, ScheduleMode,
-    TriggerError, TriggerSource,
+    CronSchedulerError, DurableCronSchedule, DurableSchedule, DurableTrigger, JobSpec,
+    ScheduleMode, TriggerError, TriggerSource,
 };
 
 use super::{PyStore, VoodooStoreError, with_store, with_store_mut};
@@ -126,7 +126,11 @@ fn py_trigger(py: Python<'_>, trigger: DurableTrigger) -> PyResult<Py<PyDict>> {
     Ok(result.unbind())
 }
 
-fn trigger_source(kind: &str, source_name: Option<Vec<u8>>, operation: Option<Vec<u8>>) -> PyResult<TriggerSource> {
+fn trigger_source(
+    kind: &str,
+    source_name: Option<Vec<u8>>,
+    operation: Option<Vec<u8>>,
+) -> PyResult<TriggerSource> {
     match kind {
         "manual" => Ok(TriggerSource::Manual),
         "collection" => Ok(TriggerSource::Collection {
