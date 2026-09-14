@@ -83,7 +83,7 @@ def test_durable_job_failure_retries_with_backoff(tmp_path):
     store.close()
 
 
-def test_durable_job_idempotency_and_cancel(tmp_path):
+def test_durable_job_idempotency_applies_only_while_active(tmp_path):
     store = Store.open(tmp_path / "idempotency.vstore")
 
     first = store.submit_job(
@@ -100,10 +100,84 @@ def test_durable_job_idempotency_and_cancel(tmp_path):
     )
     assert duplicate == first
 
-    assert store.cancel_job(first, 20) is True
-    assert store.cancel_job(first, 21) is False
-    cancelled = store.get_job(first)
+    claimed = store.claim_job(11, 10)
+    assert claimed is not None
+    store.complete_job(first, claimed["lease_generation"], 12)
+
+    next_job = store.submit_job(
+        b"sync.contact",
+        b'{"id":1}',
+        13,
+        idempotency_key=b"contact:1",
+    )
+    assert next_job != first
+    store.close()
+
+
+def test_durable_job_cancel(tmp_path):
+    store = Store.open(tmp_path / "cancel.vstore")
+    job_id = store.submit_job(b"sync.contact", b"{}", 10)
+
+    assert store.cancel_job(job_id, 20) is True
+    assert store.cancel_job(job_id, 21) is False
+    cancelled = store.get_job(job_id)
     assert cancelled is not None
     assert cancelled["state"] == "cancelled"
-    assert [entry[2] for entry in store.job_history(first)] == ["submitted", "cancelled"]
+    assert [entry[2] for entry in store.job_history(job_id)] == ["submitted", "cancelled"]
+    store.close()
+
+
+def test_claim_filters_handlers_without_leasing_other_job_types(tmp_path):
+    store = Store.open(tmp_path / "handlers.vstore")
+    email_id = store.submit_job(b"email.send", b"{}", 0)
+    report_id = store.submit_job(b"report.build", b"{}", 0)
+
+    claimed = store.claim_job(0, 1_000, handlers=[b"report.build"])
+    assert claimed is not None
+    assert claimed["id"] == report_id
+    assert claimed["handler"] == b"report.build"
+    assert store.get_job(email_id)["state"] == "ready"
+    store.close()
+
+
+def test_heartbeat_release_expiry_retry_list_and_stats(tmp_path):
+    store = Store.open(tmp_path / "queue-contract.vstore")
+    job_id = store.submit_job(b"work", b"{}", 0, max_attempts=2)
+
+    first = store.claim_job(0, 10)
+    assert first is not None
+    generation = first["lease_generation"]
+    assert store.heartbeat_job(job_id, generation, 5, 20) is True
+    assert store.get_job(job_id)["lease_until_ms"] == 25
+    assert store.heartbeat_job(job_id, generation + 1, 5, 20) is False
+
+    assert store.release_job(job_id, generation, 6) is True
+    released = store.get_job(job_id)
+    assert released["state"] == "ready"
+    assert released["attempts"] == 1
+
+    second = store.claim_job(6, 10)
+    assert second is not None
+    assert second["attempts"] == 2
+    assert store.release_expired_jobs(16) == 1
+    dead = store.get_job(job_id)
+    assert dead["state"] == "dead"
+
+    retried = store.retry_job(job_id, 20)
+    assert retried is not None
+    assert retried["state"] == "ready"
+    assert retried["attempts"] == 0
+
+    jobs = store.list_jobs()
+    assert len(jobs) == 1
+    assert jobs[0]["id"] == job_id
+    stats = store.job_stats()
+    assert stats == {
+        "total": 1,
+        "ready": 1,
+        "leased": 0,
+        "completed": 0,
+        "dead": 0,
+        "cancelled": 0,
+    }
     store.close()
