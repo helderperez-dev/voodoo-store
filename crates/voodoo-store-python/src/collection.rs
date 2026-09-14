@@ -4,7 +4,9 @@ use voodoo_store_core::{
     CollectionDefinition, CollectionError, CollectionRecord, IndexDefinition, IndexValue,
 };
 
-use super::{PyStore, VoodooStoreError, with_store, with_store_mut};
+use super::{
+    PendingOperation, PyStore, PyTransaction, VoodooStoreError, with_store, with_store_mut,
+};
 
 type PyRecord = (Py<PyBytes>, Py<PyBytes>, Vec<(Py<PyBytes>, Py<PyBytes>)>);
 
@@ -160,5 +162,26 @@ impl PyStore {
                 })
                 .map_err(map_collection_error)
         })
+    }
+}
+
+#[pymethods]
+impl PyTransaction {
+    #[pyo3(signature = (collection, primary_key, value, *, indexes = Vec::new()))]
+    fn upsert_record(
+        &mut self,
+        collection: &[u8],
+        primary_key: &[u8],
+        value: &[u8],
+        indexes: Vec<(Vec<u8>, Vec<u8>)>,
+    ) -> PyResult<()> {
+        self.ensure_open()?;
+        self.operations.push(PendingOperation::UpsertRecord {
+            collection: collection.to_vec(),
+            primary_key: primary_key.to_vec(),
+            value: value.to_vec(),
+            indexes: core_indexes(indexes),
+        });
+        Ok(())
     }
 }
