@@ -9,6 +9,7 @@ publish = false
 
 [lib]
 name = "_native"
+path = "src/binding.rs"
 crate-type = ["cdylib"]
 
 [dependencies]
