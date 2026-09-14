@@ -84,6 +84,16 @@ pub struct DurableJob {
     pub idempotency_key: Option<Vec<u8>>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DurableJobStats {
+    pub total: u64,
+    pub ready: u64,
+    pub leased: u64,
+    pub completed: u64,
+    pub dead: u64,
+    pub cancelled: u64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JobHistoryKind {
     Submitted = 0,
@@ -127,7 +137,7 @@ impl Store {
     pub fn submit_job(&mut self, spec: JobSpec, now_ms: i64) -> Result<JobId, JobError> {
         validate_job_spec(&spec)?;
         if let Some(key) = spec.idempotency_key.as_deref() {
-            if let Some(existing) = self.find_job_by_idempotency(key)? {
+            if let Some(existing) = self.find_active_job_by_idempotency(key)? {
                 return Ok(existing);
             }
         }
@@ -160,6 +170,15 @@ impl Store {
         now_ms: i64,
         lease_duration_ms: u64,
     ) -> Result<Option<DurableJob>, JobError> {
+        self.claim_job_for_handlers(now_ms, lease_duration_ms, &[])
+    }
+
+    pub fn claim_job_for_handlers(
+        &mut self,
+        now_ms: i64,
+        lease_duration_ms: u64,
+        handlers: &[Vec<u8>],
+    ) -> Result<Option<DurableJob>, JobError> {
         let lease_duration =
             i64::try_from(lease_duration_ms).map_err(|_| JobError::TimeOverflow)?;
         let lease_until_ms = now_ms
@@ -170,6 +189,9 @@ impl Store {
 
         for (_, encoded) in self.scan_prefix(JOB_PREFIX) {
             let job = decode_job(&encoded)?;
+            if !handlers.is_empty() && !handlers.iter().any(|handler| handler == &job.handler) {
+                continue;
+            }
             let reclaimable = job.state == DurableJobState::Ready
                 || (job.state == DurableJobState::Leased && job.lease_until_ms <= now_ms);
             if !reclaimable {
@@ -228,6 +250,25 @@ impl Store {
         Ok(Some(job))
     }
 
+    pub fn heartbeat_job(
+        &mut self,
+        id: &JobId,
+        lease_generation: u32,
+        now_ms: i64,
+        lease_duration_ms: u64,
+    ) -> Result<bool, JobError> {
+        let Some(mut job) = self.get_job(id)? else {
+            return Ok(false);
+        };
+        if job.state != DurableJobState::Leased || job.lease_generation != lease_generation {
+            return Ok(false);
+        }
+        let duration = i64::try_from(lease_duration_ms).map_err(|_| JobError::TimeOverflow)?;
+        job.lease_until_ms = now_ms.checked_add(duration).ok_or(JobError::TimeOverflow)?;
+        self.persist_job(&job)?;
+        Ok(true)
+    }
+
     pub fn complete_job(
         &mut self,
         id: &JobId,
@@ -269,6 +310,89 @@ impl Store {
         Ok(job.state)
     }
 
+    pub fn release_job(
+        &mut self,
+        id: &JobId,
+        lease_generation: u32,
+        now_ms: i64,
+    ) -> Result<bool, JobError> {
+        let Some(mut job) = self.get_job(id)? else {
+            return Ok(false);
+        };
+        if job.state != DurableJobState::Leased || job.lease_generation != lease_generation {
+            return Ok(false);
+        }
+        job.state = DurableJobState::Ready;
+        job.available_at_ms = now_ms;
+        job.lease_until_ms = 0;
+        self.persist_job_with_history(
+            &job,
+            now_ms,
+            JobHistoryKind::RetryScheduled,
+            b"released",
+        )?;
+        Ok(true)
+    }
+
+    pub fn release_expired_jobs(&mut self, now_ms: i64) -> Result<usize, JobError> {
+        let mut expired = Vec::new();
+        for (_, encoded) in self.scan_prefix(JOB_PREFIX) {
+            let job = decode_job(&encoded)?;
+            if job.state == DurableJobState::Leased && job.lease_until_ms <= now_ms {
+                expired.push(job);
+            }
+        }
+
+        let count = expired.len();
+        for mut job in expired {
+            job.lease_until_ms = 0;
+            if job.attempts >= job.max_attempts {
+                job.state = DurableJobState::Dead;
+                self.persist_job_with_history(
+                    &job,
+                    now_ms,
+                    JobHistoryKind::Dead,
+                    b"lease expired: max attempts exhausted",
+                )?;
+            } else {
+                job.state = DurableJobState::Ready;
+                job.available_at_ms = now_ms;
+                self.persist_job_with_history(
+                    &job,
+                    now_ms,
+                    JobHistoryKind::RetryScheduled,
+                    b"lease expired",
+                )?;
+            }
+        }
+        Ok(count)
+    }
+
+    pub fn retry_job(
+        &mut self,
+        id: &JobId,
+        now_ms: i64,
+    ) -> Result<Option<DurableJob>, JobError> {
+        let Some(mut job) = self.get_job(id)? else {
+            return Ok(None);
+        };
+        if job.state != DurableJobState::Dead {
+            return Ok(None);
+        }
+        job.state = DurableJobState::Ready;
+        job.available_at_ms = now_ms;
+        job.attempts = 0;
+        job.lease_until_ms = 0;
+        job.lease_generation = 0;
+        self.persist_job_with_history(
+            &job,
+            now_ms,
+            JobHistoryKind::RetryScheduled,
+            b"manual retry",
+        )?;
+        Ok(Some(job))
+    }
+
     pub fn cancel_job(&mut self, id: &JobId, now_ms: i64) -> Result<bool, JobError> {
         let Some(mut job) = self.get_job(id)? else {
             return Ok(false);
@@ -283,6 +407,37 @@ impl Store {
         job.lease_until_ms = 0;
         self.persist_job_with_history(&job, now_ms, JobHistoryKind::Cancelled, &[])?;
         Ok(true)
+    }
+
+    pub fn list_jobs(&self) -> Result<Vec<DurableJob>, JobError> {
+        let mut jobs = Vec::new();
+        for (_, encoded) in self.scan_prefix(JOB_PREFIX) {
+            jobs.push(decode_job(&encoded)?);
+        }
+        jobs.sort_unstable_by(|left, right| {
+            right
+                .available_at_ms
+                .cmp(&left.available_at_ms)
+                .then_with(|| right.id.cmp(&left.id))
+        });
+        Ok(jobs)
+    }
+
+    pub fn job_stats(&self) -> Result<DurableJobStats, JobError> {
+        let mut stats = DurableJobStats::default();
+        for (_, encoded) in self.scan_prefix(JOB_PREFIX) {
+            let job = decode_job(&encoded)?;
+            stats.total = stats.total.checked_add(1).ok_or(JobError::CountOverflow)?;
+            let counter = match job.state {
+                DurableJobState::Ready => &mut stats.ready,
+                DurableJobState::Leased => &mut stats.leased,
+                DurableJobState::Completed => &mut stats.completed,
+                DurableJobState::Dead => &mut stats.dead,
+                DurableJobState::Cancelled => &mut stats.cancelled,
+            };
+            *counter = counter.checked_add(1).ok_or(JobError::CountOverflow)?;
+        }
+        Ok(stats)
     }
 
     pub fn job_history(&self, id: &JobId) -> Result<Vec<JobHistoryEntry>, JobError> {
@@ -391,6 +546,11 @@ impl Store {
         Ok(SchedulerTickReport { scanned, fired })
     }
 
+    fn persist_job(&mut self, job: &DurableJob) -> Result<(), JobError> {
+        self.put_internal(job_key(&job.id), encode_job(job)?)?;
+        Ok(())
+    }
+
     fn persist_job_with_history(
         &mut self,
         job: &DurableJob,
@@ -422,10 +582,12 @@ impl Store {
         }
     }
 
-    fn find_job_by_idempotency(&self, key: &[u8]) -> Result<Option<JobId>, JobError> {
+    fn find_active_job_by_idempotency(&self, key: &[u8]) -> Result<Option<JobId>, JobError> {
         for (_, encoded) in self.scan_prefix(JOB_PREFIX) {
             let job = decode_job(&encoded)?;
-            if job.idempotency_key.as_deref() == Some(key) {
+            if matches!(job.state, DurableJobState::Ready | DurableJobState::Leased)
+                && job.idempotency_key.as_deref() == Some(key)
+            {
                 return Ok(Some(job.id));
             }
         }
@@ -443,7 +605,9 @@ pub(crate) fn enqueue_job_tx(
     if let Some(key) = spec.idempotency_key.as_deref() {
         for (_, encoded) in tx.scan_prefix_internal(JOB_PREFIX) {
             let job = decode_job(&encoded)?;
-            if job.idempotency_key.as_deref() == Some(key) {
+            if matches!(job.state, DurableJobState::Ready | DurableJobState::Leased)
+                && job.idempotency_key.as_deref() == Some(key)
+            {
                 return Ok(job.id);
             }
         }
@@ -815,6 +979,8 @@ pub enum JobError {
     AttemptExhausted,
     #[error("job history sequence exhausted")]
     HistoryExhausted,
+    #[error("job count overflowed")]
+    CountOverflow,
     #[error("time value overflowed")]
     TimeOverflow,
     #[error("operating-system entropy is unavailable")]
@@ -876,6 +1042,65 @@ mod tests {
     }
 
     #[test]
+    fn filtered_claim_only_leases_matching_handler() {
+        let path = temp_store_path("filtered");
+        let mut store = Store::open(&path).unwrap();
+        let email = store
+            .submit_job(JobSpec::new(b"email".to_vec(), Vec::new()), 0)
+            .unwrap();
+        let report = store
+            .submit_job(JobSpec::new(b"report".to_vec(), Vec::new()), 0)
+            .unwrap();
+
+        let handlers = vec![b"report".to_vec()];
+        let claimed = store
+            .claim_job_for_handlers(0, 100, &handlers)
+            .unwrap()
+            .unwrap();
+        assert_eq!(claimed.id, report);
+        assert_eq!(store.get_job(&email).unwrap().unwrap().state, DurableJobState::Ready);
+        drop(store);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn heartbeat_release_reaper_retry_and_stats_cover_queue_lifecycle() {
+        let path = temp_store_path("queue-contract");
+        let mut store = Store::open(&path).unwrap();
+        let mut spec = JobSpec::new(b"work".to_vec(), Vec::new());
+        spec.max_attempts = 2;
+        let id = store.submit_job(spec, 0).unwrap();
+
+        let claimed = store.claim_job(0, 10).unwrap().unwrap();
+        assert!(store
+            .heartbeat_job(&id, claimed.lease_generation, 5, 20)
+            .unwrap());
+        assert_eq!(store.get_job(&id).unwrap().unwrap().lease_until_ms, 25);
+        assert!(store
+            .release_job(&id, claimed.lease_generation, 6)
+            .unwrap());
+        assert_eq!(store.get_job(&id).unwrap().unwrap().state, DurableJobState::Ready);
+
+        let second = store.claim_job(6, 10).unwrap().unwrap();
+        assert_eq!(second.attempts, 2);
+        assert_eq!(store.release_expired_jobs(16).unwrap(), 1);
+        assert_eq!(store.get_job(&id).unwrap().unwrap().state, DurableJobState::Dead);
+
+        let retried = store.retry_job(&id, 20).unwrap().unwrap();
+        assert_eq!(retried.state, DurableJobState::Ready);
+        assert_eq!(retried.attempts, 0);
+
+        let jobs = store.list_jobs().unwrap();
+        assert_eq!(jobs.len(), 1);
+        let stats = store.job_stats().unwrap();
+        assert_eq!(stats.total, 1);
+        assert_eq!(stats.ready, 1);
+        assert_eq!(stats.dead, 0);
+        drop(store);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn deadline_expiry_marks_job_dead_with_history() {
         let path = temp_store_path("deadline");
         let mut store = Store::open(&path).unwrap();
@@ -896,14 +1121,21 @@ mod tests {
     }
 
     #[test]
-    fn idempotency_key_reuses_existing_job() {
+    fn idempotency_key_reuses_only_active_job() {
         let path = temp_store_path("idempotency");
         let mut store = Store::open(&path).unwrap();
         let mut spec = JobSpec::new(b"invoice".to_vec(), b"x".to_vec());
         spec.idempotency_key = Some(b"invoice:42".to_vec());
         let first = store.submit_job(spec.clone(), 0).unwrap();
-        let second = store.submit_job(spec, 1).unwrap();
-        assert_eq!(first, second);
+        let duplicate = store.submit_job(spec.clone(), 1).unwrap();
+        assert_eq!(first, duplicate);
+
+        let claimed = store.claim_job(1, 100).unwrap().unwrap();
+        store
+            .complete_job(&first, claimed.lease_generation, 2)
+            .unwrap();
+        let after_completion = store.submit_job(spec, 3).unwrap();
+        assert_ne!(first, after_completion);
         drop(store);
         let _ = fs::remove_file(path);
     }
