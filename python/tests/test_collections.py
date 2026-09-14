@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from voodoo_store import Store, StoreError
+from voodoo_store import Store, VoodooStoreError
 
 
 def test_native_collection_crud_and_scan(tmp_path):
@@ -65,7 +65,7 @@ def test_native_collection_unique_index(tmp_path):
         indexes=[(b"email", b"ada@example.com")],
     )
 
-    with pytest.raises(StoreError):
+    with pytest.raises(VoodooStoreError):
         store.upsert_record(
             b"user",
             b"2",
