@@ -13,5 +13,5 @@ path = "src/binding.rs"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.28", features = ["extension-module", "abi3-py39"] }
+pyo3 = { version = "0.28", features = ["extension-module", "abi3-py39", "multiple-pymethods"] }
 voodoo-store-core = { path = "../voodoo-store-core" }
