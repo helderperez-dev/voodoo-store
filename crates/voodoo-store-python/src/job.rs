@@ -68,9 +68,9 @@ fn parse_job_id(id: &[u8]) -> PyResult<[u8; 16]> {
         .map_err(|_| VoodooStoreError::new_err("job id must be exactly 16 bytes"))
 }
 
+#[allow(clippy::too_many_arguments)]
 #[pymethods]
 impl PyStore {
-    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
         handler,
         payload,
