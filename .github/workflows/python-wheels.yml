@@ -132,7 +132,11 @@ jobs:
         run: |
           cargo fmt --all -- --check
           cargo clippy --workspace --all-targets -- -D warnings
-          cargo test --workspace
+          # The PyO3 crate is an extension module and intentionally does not link
+          # libpython. Testing it as a standalone Rust test binary on Linux causes
+          # undefined Python C-API symbols. The binding is built and tested below
+          # through maturin/pytest, matching the normal CI contract.
+          cargo test --workspace --exclude voodoo-store-python
       - name: Python tests
         run: |
           python -m pip install "maturin>=1.9,<2" pytest
