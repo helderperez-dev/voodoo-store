@@ -75,3 +75,33 @@ def test_native_collection_unique_index(tmp_path):
 
     assert store.get_record(b"user", b"2") is None
     store.close()
+
+
+def test_transaction_commits_kv_and_native_record_atomically(tmp_path):
+    store = Store.open(tmp_path / "atomic.vstore")
+    store.create_collection(b"lead", codec=b"json")
+
+    tx = store.transaction()
+    tx.put(b"data:lead:meta:next_id", b"2")
+    tx.upsert_record(b"lead", b"1", b'{"name":"Ada"}')
+    tx.commit()
+
+    assert store.get(b"data:lead:meta:next_id") == b"2"
+    record = store.get_record(b"lead", b"1")
+    assert record is not None
+    assert record[1] == b'{"name":"Ada"}'
+    store.close()
+
+
+def test_transaction_rollback_discards_native_record(tmp_path):
+    store = Store.open(tmp_path / "rollback.vstore")
+    store.create_collection(b"lead", codec=b"json")
+
+    tx = store.transaction()
+    tx.put(b"data:lead:meta:next_id", b"2")
+    tx.upsert_record(b"lead", b"1", b'{"name":"Ada"}')
+    tx.rollback()
+
+    assert store.get(b"data:lead:meta:next_id") is None
+    assert store.get_record(b"lead", b"1") is None
+    store.close()
