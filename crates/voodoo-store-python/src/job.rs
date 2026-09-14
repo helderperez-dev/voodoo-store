@@ -70,6 +70,7 @@ fn parse_job_id(id: &[u8]) -> PyResult<[u8; 16]> {
 
 #[pymethods]
 impl PyStore {
+    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
         handler,
         payload,
