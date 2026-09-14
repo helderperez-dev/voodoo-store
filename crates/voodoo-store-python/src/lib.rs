@@ -162,7 +162,7 @@ impl PyStore {
     }
 
     fn flush(&self) -> PyResult<()> {
-        with_store(&self.slot, |store| store.flush().map_err(map_engine_error))
+        with_store_mut(&self.slot, |store| store.flush().map_err(map_engine_error))
     }
 
     fn transaction(&self) -> PyResult<PyTransaction> {
@@ -206,6 +206,12 @@ impl PyStore {
 enum PendingOperation {
     Put(Vec<u8>, Vec<u8>),
     Delete(Vec<u8>),
+    UpsertRecord {
+        collection: Vec<u8>,
+        primary_key: Vec<u8>,
+        value: Vec<u8>,
+        indexes: Vec<voodoo_store_core::IndexValue>,
+    },
 }
 
 enum PendingLookup<'a> {
@@ -314,6 +320,15 @@ impl PyTransaction {
                     }
                     PendingOperation::Delete(key) => {
                         tx.delete(key).map_err(map_engine_error)?;
+                    }
+                    PendingOperation::UpsertRecord {
+                        collection,
+                        primary_key,
+                        value,
+                        indexes,
+                    } => {
+                        tx.upsert_record(collection, primary_key, value, indexes)
+                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
                     }
                 }
             }
