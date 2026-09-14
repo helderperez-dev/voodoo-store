@@ -475,28 +475,17 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyStore>()?;
     module.add_class::<PyTransaction>()?;
     module.add_class::<PyVerificationReport>()?;
-    module.add(
-        "VoodooStoreError",
-        module.py().get_type::<VoodooStoreError>(),
-    )?;
-    module.add(
-        "StoreClosedError",
-        module.py().get_type::<StoreClosedError>(),
-    )?;
+    module.add("VoodooStoreError", module.py().get_type::<VoodooStoreError>())?;
+    module.add("StoreClosedError", module.py().get_type::<StoreClosedError>())?;
     module.add("StoreBusyError", module.py().get_type::<StoreBusyError>())?;
-    module.add(
-        "AlreadyOpenError",
-        module.py().get_type::<AlreadyOpenError>(),
-    )?;
-    module.add(
-        "ReservedKeyError",
-        module.py().get_type::<ReservedKeyError>(),
-    )?;
+    module.add("AlreadyOpenError", module.py().get_type::<AlreadyOpenError>())?;
+    module.add("ReservedKeyError", module.py().get_type::<ReservedKeyError>())?;
     module.add(
         "TransactionFinishedError",
         module.py().get_type::<TransactionFinishedError>(),
     )?;
     module.add("CorruptionError", module.py().get_type::<CorruptionError>())?;
     module.add("IoError", module.py().get_type::<IoError>())?;
+    module.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }
