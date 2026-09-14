@@ -1,7 +1,8 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
 use voodoo_store_core::{
-    DurableJob, DurableJobState, JobError, JobHistoryEntry, JobHistoryKind, JobSpec,
+    DurableJob, DurableJobState, DurableJobStats, JobError, JobHistoryEntry, JobHistoryKind,
+    JobSpec,
 };
 
 use super::{PyStore, VoodooStoreError, with_store, with_store_mut};
@@ -51,6 +52,17 @@ fn py_job(py: Python<'_>, job: DurableJob) -> PyResult<Py<PyDict>> {
         Some(key) => result.set_item("idempotency_key", PyBytes::new(py, &key))?,
         None => result.set_item("idempotency_key", py.None())?,
     }
+    Ok(result.unbind())
+}
+
+fn py_stats(py: Python<'_>, stats: DurableJobStats) -> PyResult<Py<PyDict>> {
+    let result = PyDict::new(py);
+    result.set_item("total", stats.total)?;
+    result.set_item("ready", stats.ready)?;
+    result.set_item("leased", stats.leased)?;
+    result.set_item("completed", stats.completed)?;
+    result.set_item("dead", stats.dead)?;
+    result.set_item("cancelled", stats.cancelled)?;
     Ok(result.unbind())
 }
 
@@ -122,20 +134,37 @@ impl PyStore {
         })
     }
 
+    #[pyo3(signature = (now_ms, lease_duration_ms, *, handlers = Vec::new()))]
     fn claim_job(
         &self,
         py: Python<'_>,
         now_ms: i64,
         lease_duration_ms: u64,
+        handlers: Vec<Vec<u8>>,
     ) -> PyResult<Option<Py<PyDict>>> {
         with_store_mut(&self.slot, |store| {
             let job = store
-                .claim_job(now_ms, lease_duration_ms)
+                .claim_job_for_handlers(now_ms, lease_duration_ms, &handlers)
                 .map_err(map_job_error)?;
             match job {
                 Some(job) => Ok(Some(py_job(py, job)?)),
                 None => Ok(None),
             }
+        })
+    }
+
+    fn heartbeat_job(
+        &self,
+        id: &[u8],
+        lease_generation: u32,
+        now_ms: i64,
+        lease_duration_ms: u64,
+    ) -> PyResult<bool> {
+        let id = parse_job_id(id)?;
+        with_store_mut(&self.slot, |store| {
+            store
+                .heartbeat_job(&id, lease_generation, now_ms, lease_duration_ms)
+                .map_err(map_job_error)
         })
     }
 
@@ -164,10 +193,54 @@ impl PyStore {
         })
     }
 
+    fn release_job(&self, id: &[u8], lease_generation: u32, now_ms: i64) -> PyResult<bool> {
+        let id = parse_job_id(id)?;
+        with_store_mut(&self.slot, |store| {
+            store
+                .release_job(&id, lease_generation, now_ms)
+                .map_err(map_job_error)
+        })
+    }
+
+    fn release_expired_jobs(&self, now_ms: i64) -> PyResult<usize> {
+        with_store_mut(&self.slot, |store| {
+            store.release_expired_jobs(now_ms).map_err(map_job_error)
+        })
+    }
+
+    fn retry_job(&self, py: Python<'_>, id: &[u8], now_ms: i64) -> PyResult<Option<Py<PyDict>>> {
+        let id = parse_job_id(id)?;
+        with_store_mut(&self.slot, |store| {
+            let job = store.retry_job(&id, now_ms).map_err(map_job_error)?;
+            match job {
+                Some(job) => Ok(Some(py_job(py, job)?)),
+                None => Ok(None),
+            }
+        })
+    }
+
     fn cancel_job(&self, id: &[u8], now_ms: i64) -> PyResult<bool> {
         let id = parse_job_id(id)?;
         with_store_mut(&self.slot, |store| {
             store.cancel_job(&id, now_ms).map_err(map_job_error)
+        })
+    }
+
+    fn list_jobs(&self, py: Python<'_>) -> PyResult<Vec<Py<PyDict>>> {
+        with_store(&self.slot, |store| {
+            store
+                .list_jobs()
+                .map_err(map_job_error)?
+                .into_iter()
+                .map(|job| py_job(py, job))
+                .collect()
+        })
+    }
+
+    fn job_stats(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
+        with_store(&self.slot, |store| {
+            let stats = store.job_stats().map_err(map_job_error)?;
+            py_stats(py, stats)
         })
     }
 
