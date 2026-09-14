@@ -6,11 +6,7 @@ use voodoo_store_core::{
 
 use super::{PyStore, VoodooStoreError, with_store, with_store_mut};
 
-type PyRecord = (
-    Py<PyBytes>,
-    Py<PyBytes>,
-    Vec<(Py<PyBytes>, Py<PyBytes>)>,
-);
+type PyRecord = (Py<PyBytes>, Py<PyBytes>, Vec<(Py<PyBytes>, Py<PyBytes>)>);
 
 fn map_collection_error(error: CollectionError) -> PyErr {
     VoodooStoreError::new_err(error.to_string())
