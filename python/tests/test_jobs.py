@@ -17,25 +17,25 @@ def test_durable_job_submit_claim_complete_and_history(tmp_path):
 
     submitted = store.get_job(job_id)
     assert submitted is not None
-    assert submitted[0] == job_id
-    assert submitted[1] == "ready"
-    assert submitted[2] == b"email.send"
-    assert submitted[3] == b'{"to":"ada@example.com"}'
-    assert submitted[7] == 0
-    assert submitted[8] == 3
+    assert submitted["id"] == job_id
+    assert submitted["state"] == "ready"
+    assert submitted["handler"] == b"email.send"
+    assert submitted["payload"] == b'{"to":"ada@example.com"}'
+    assert submitted["attempts"] == 0
+    assert submitted["max_attempts"] == 3
 
     claimed = store.claim_job(1_000, 30_000)
     assert claimed is not None
-    assert claimed[0] == job_id
-    assert claimed[1] == "leased"
-    assert claimed[7] == 1
-    assert claimed[10] == 31_000
-    assert claimed[11] == 1
+    assert claimed["id"] == job_id
+    assert claimed["state"] == "leased"
+    assert claimed["attempts"] == 1
+    assert claimed["lease_until_ms"] == 31_000
+    assert claimed["lease_generation"] == 1
 
-    store.complete_job(job_id, claimed[11], 1_250)
+    store.complete_job(job_id, claimed["lease_generation"], 1_250)
     completed = store.get_job(job_id)
     assert completed is not None
-    assert completed[1] == "completed"
+    assert completed["state"] == "completed"
 
     history = store.job_history(job_id)
     assert [entry[2] for entry in history] == ["submitted", "claimed", "completed"]
@@ -54,19 +54,25 @@ def test_durable_job_failure_retries_with_backoff(tmp_path):
 
     first = store.claim_job(5_000, 10_000)
     assert first is not None
-    assert first[0] == job_id
-    assert store.fail_job(job_id, first[11], 5_100, b"temporary") == "ready"
+    assert first["id"] == job_id
+    assert (
+        store.fail_job(job_id, first["lease_generation"], 5_100, b"temporary")
+        == "ready"
+    )
 
     assert store.claim_job(7_099, 10_000) is None
     second = store.claim_job(7_100, 10_000)
     assert second is not None
-    assert second[0] == job_id
-    assert second[7] == 2
-    assert store.fail_job(job_id, second[11], 7_200, b"still failing") == "dead"
+    assert second["id"] == job_id
+    assert second["attempts"] == 2
+    assert (
+        store.fail_job(job_id, second["lease_generation"], 7_200, b"still failing")
+        == "dead"
+    )
 
     dead = store.get_job(job_id)
     assert dead is not None
-    assert dead[1] == "dead"
+    assert dead["state"] == "dead"
     assert [entry[2] for entry in store.job_history(job_id)] == [
         "submitted",
         "claimed",
@@ -98,6 +104,6 @@ def test_durable_job_idempotency_and_cancel(tmp_path):
     assert store.cancel_job(first, 21) is False
     cancelled = store.get_job(first)
     assert cancelled is not None
-    assert cancelled[1] == "cancelled"
+    assert cancelled["state"] == "cancelled"
     assert [entry[2] for entry in store.job_history(first)] == ["submitted", "cancelled"]
     store.close()
