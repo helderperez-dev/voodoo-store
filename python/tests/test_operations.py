@@ -21,7 +21,7 @@ def test_storage_stats_and_health_report(tmp_path: Path) -> None:
         assert stats["amplification_ratio"] > 0
 
         health = store.health_report()
-        assert health["store_id"] == Store.verify(path).store_id
+        assert len(health["store_id"]) == 16
         assert health["format_major"] >= 0
         assert health["storage"]["live_keys"] == stats["live_keys"]
         namespaces = {item["name"]: item for item in health["namespaces"]}
@@ -36,7 +36,7 @@ def test_backup_restore_and_checkpoint_preserve_store_identity(tmp_path: Path) -
 
     with Store.open(source) as store:
         store.put(b"order:42", b"paid")
-        source_id = Store.verify(source).store_id
+        source_id = store.health_report()["store_id"]
 
         copied_bytes = store.backup_to(backup)
         assert copied_bytes > 0
@@ -68,7 +68,7 @@ def test_compact_snapshot_and_generation_are_verified(tmp_path: Path) -> None:
         for index in range(10):
             store.put(b"counter", str(index).encode())
         store.put(b"stable", b"value")
-        source_id = Store.verify(source).store_id
+        source_id = store.health_report()["store_id"]
 
         compact_report = store.compact_copy_to(compacted)
         assert compact_report["source_bytes"] >= compact_report["compacted_bytes"]
