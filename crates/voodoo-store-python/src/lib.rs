@@ -235,9 +235,67 @@ enum PendingOperation {
         payload: Vec<u8>,
         created_at_ms: i64,
     },
+    PutObject {
+        content: Vec<u8>,
+    },
+    LinkObject {
+        namespace: Vec<u8>,
+        name: Vec<u8>,
+        object: PendingObjectReference,
+    },
+    UnlinkObject {
+        namespace: Vec<u8>,
+        name: Vec<u8>,
+    },
+    RequestRpc {
+        method: Vec<u8>,
+        payload: Vec<u8>,
+        created_at_ms: i64,
+        deadline_ms: Option<i64>,
+    },
+    CreateWorkflow {
+        workflow_type: Vec<u8>,
+        initial_step: Vec<u8>,
+        initial_state: Vec<u8>,
+        parent_id: Option<voodoo_store_core::WorkflowId>,
+        now_ms: i64,
+    },
+    SetWorkflowStep {
+        workflow: PendingWorkflowReference,
+        step: Vec<u8>,
+        state: Vec<u8>,
+        now_ms: i64,
+    },
+    WaitWorkflowSignal {
+        workflow: PendingWorkflowReference,
+        signal: Vec<u8>,
+        now_ms: i64,
+    },
+    WaitWorkflowUntil {
+        workflow: PendingWorkflowReference,
+        resume_at_ms: i64,
+        now_ms: i64,
+    },
+    CompleteWorkflow {
+        workflow: PendingWorkflowReference,
+        final_state: Vec<u8>,
+        now_ms: i64,
+    },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+enum PendingObjectReference {
+    Id(voodoo_store_core::ObjectId),
+    Operation(usize),
+}
+
+#[derive(Debug, Clone)]
+enum PendingWorkflowReference {
+    Id(voodoo_store_core::WorkflowId),
+    Operation(usize),
+}
+
+#[derive(Debug, Clone)]
 enum OperationResult {
     JobId([u8; 16]),
     QueueId(u64),
@@ -246,6 +304,16 @@ enum OperationResult {
     OutboxId {
         tx_id: u64,
         nonce: [u8; 16],
+    },
+    ObjectId(voodoo_store_core::ObjectId),
+    RpcId {
+        tx_id: u64,
+        nonce: [u8; 16],
+    },
+    WorkflowId(voodoo_store_core::WorkflowId),
+    Boolean {
+        kind: &'static str,
+        value: bool,
     },
 }
 
@@ -473,6 +541,104 @@ impl PyTransaction {
                             nonce: id.nonce,
                         })
                     }
+                    PendingOperation::PutObject { content } => {
+                        let id = tx
+                            .put_object(content)
+                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
+                        Some(OperationResult::ObjectId(id))
+                    }
+                    PendingOperation::LinkObject {
+                        namespace,
+                        name,
+                        object,
+                    } => {
+                        let id = resolve_object_reference(object, &results)?;
+                        tx.link_object(namespace, name, &id)
+                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
+                        None
+                    }
+                    PendingOperation::UnlinkObject { namespace, name } => {
+                        let removed = tx
+                            .unlink_object(namespace, name)
+                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
+                        Some(OperationResult::Boolean {
+                            kind: "object_unlink",
+                            value: removed,
+                        })
+                    }
+                    PendingOperation::RequestRpc {
+                        method,
+                        payload,
+                        created_at_ms,
+                        deadline_ms,
+                    } => {
+                        let id = tx
+                            .request_rpc(method, payload, *created_at_ms, *deadline_ms)
+                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
+                        Some(OperationResult::RpcId {
+                            tx_id: id.tx_id,
+                            nonce: id.nonce,
+                        })
+                    }
+                    PendingOperation::CreateWorkflow {
+                        workflow_type,
+                        initial_step,
+                        initial_state,
+                        parent_id,
+                        now_ms,
+                    } => {
+                        let id = tx
+                            .create_workflow(
+                                workflow_type,
+                                initial_step,
+                                initial_state,
+                                *parent_id,
+                                *now_ms,
+                            )
+                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
+                        Some(OperationResult::WorkflowId(id))
+                    }
+                    PendingOperation::SetWorkflowStep {
+                        workflow,
+                        step,
+                        state,
+                        now_ms,
+                    } => {
+                        let id = resolve_workflow_reference(workflow, &results)?;
+                        tx.set_workflow_step(&id, step, state, *now_ms)
+                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
+                        None
+                    }
+                    PendingOperation::WaitWorkflowSignal {
+                        workflow,
+                        signal,
+                        now_ms,
+                    } => {
+                        let id = resolve_workflow_reference(workflow, &results)?;
+                        tx.wait_for_signal(&id, signal, *now_ms)
+                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
+                        None
+                    }
+                    PendingOperation::WaitWorkflowUntil {
+                        workflow,
+                        resume_at_ms,
+                        now_ms,
+                    } => {
+                        let id = resolve_workflow_reference(workflow, &results)?;
+                        tx.wait_until(&id, *resume_at_ms, *now_ms)
+                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
+                        None
+                    }
+                    PendingOperation::CompleteWorkflow {
+                        workflow,
+                        final_state,
+                        now_ms,
+                    } => {
+                        let id = resolve_workflow_reference(workflow, &results)?;
+                        tx.complete_workflow(&id, final_state, *now_ms)
+                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
+                        None
+                    }
                 };
                 results.push(operation_result);
             }
@@ -537,6 +703,39 @@ impl Drop for PyTransaction {
     }
 }
 
+fn resolve_object_reference(
+    reference: &PendingObjectReference,
+    results: &[Option<OperationResult>],
+) -> PyResult<voodoo_store_core::ObjectId> {
+    match reference {
+        PendingObjectReference::Id(id) => Ok(*id),
+        PendingObjectReference::Operation(index) => match results.get(*index).and_then(Option::as_ref)
+        {
+            Some(OperationResult::ObjectId(id)) => Ok(*id),
+            _ => Err(VoodooStoreError::new_err(
+                "object reference token does not point to a committed put_object operation",
+            )),
+        },
+    }
+}
+
+fn resolve_workflow_reference(
+    reference: &PendingWorkflowReference,
+    results: &[Option<OperationResult>],
+) -> PyResult<voodoo_store_core::WorkflowId> {
+    match reference {
+        PendingWorkflowReference::Id(id) => Ok(*id),
+        PendingWorkflowReference::Operation(index) => {
+            match results.get(*index).and_then(Option::as_ref) {
+                Some(OperationResult::WorkflowId(id)) => Ok(*id),
+                _ => Err(VoodooStoreError::new_err(
+                    "workflow reference token does not point to a committed create_workflow operation",
+                )),
+            }
+        }
+    }
+}
+
 fn py_operation_result(py: Python<'_>, result: OperationResult) -> PyResult<Py<PyDict>> {
     let output = PyDict::new(py);
     match result {
@@ -560,6 +759,23 @@ fn py_operation_result(py: Python<'_>, result: OperationResult) -> PyResult<Py<P
             output.set_item("kind", "outbox")?;
             output.set_item("tx_id", tx_id)?;
             output.set_item("nonce", PyBytes::new(py, &nonce))?;
+        }
+        OperationResult::ObjectId(id) => {
+            output.set_item("kind", "object")?;
+            output.set_item("id", PyBytes::new(py, &id))?;
+        }
+        OperationResult::RpcId { tx_id, nonce } => {
+            output.set_item("kind", "rpc")?;
+            output.set_item("tx_id", tx_id)?;
+            output.set_item("nonce", PyBytes::new(py, &nonce))?;
+        }
+        OperationResult::WorkflowId(id) => {
+            output.set_item("kind", "workflow")?;
+            output.set_item("id", PyBytes::new(py, &id))?;
+        }
+        OperationResult::Boolean { kind, value } => {
+            output.set_item("kind", kind)?;
+            output.set_item("value", value)?;
         }
     }
     Ok(output.unbind())
