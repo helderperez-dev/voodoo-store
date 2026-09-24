@@ -43,6 +43,24 @@ impl PyTransaction {
         Ok(())
     }
 
+    #[pyo3(signature = (queue, payload, *, available_at_ms = 0, priority = 0))]
+    fn push_queue(
+        &mut self,
+        queue: &[u8],
+        payload: &[u8],
+        available_at_ms: i64,
+        priority: i32,
+    ) -> PyResult<()> {
+        self.ensure_open()?;
+        self.operations.push(PendingOperation::PushQueue {
+            queue: queue.to_vec(),
+            payload: payload.to_vec(),
+            available_at_ms,
+            priority,
+        });
+        Ok(())
+    }
+
     fn append_stream(&mut self, stream: &[u8], payload: &[u8]) -> PyResult<()> {
         self.ensure_open()?;
         self.operations.push(PendingOperation::AppendStream {
