@@ -60,10 +60,7 @@ fn py_health(py: Python<'_>, report: HealthReport) -> PyResult<Py<PyDict>> {
 
 fn py_checkpoint(py: Python<'_>, report: CheckpointReport) -> PyResult<Py<PyDict>> {
     let result = PyDict::new(py);
-    result.set_item(
-        "source_store_id",
-        PyBytes::new(py, &report.source_store_id),
-    )?;
+    result.set_item("source_store_id", PyBytes::new(py, &report.source_store_id))?;
     result.set_item(
         "checkpoint_store_id",
         PyBytes::new(py, &report.checkpoint_store_id),
@@ -96,10 +93,7 @@ fn py_restore(py: Python<'_>, report: RestoreReport) -> PyResult<Py<PyDict>> {
 fn py_snapshot(py: Python<'_>, report: SnapshotReport) -> PyResult<Py<PyDict>> {
     let result = PyDict::new(py);
     result.set_item("destination", report.destination)?;
-    result.set_item(
-        "source_store_id",
-        PyBytes::new(py, &report.source_store_id),
-    )?;
+    result.set_item("source_store_id", PyBytes::new(py, &report.source_store_id))?;
     result.set_item(
         "snapshot_store_id",
         PyBytes::new(py, &report.snapshot_store_id),
@@ -149,11 +143,7 @@ impl PyStore {
     }
 
     #[staticmethod]
-    fn restore_copy(
-        py: Python<'_>,
-        source: PathBuf,
-        destination: PathBuf,
-    ) -> PyResult<Py<PyDict>> {
+    fn restore_copy(py: Python<'_>, source: PathBuf, destination: PathBuf) -> PyResult<Py<PyDict>> {
         CoreStore::restore_copy(source, destination)
             .map_err(map_engine_error)
             .and_then(|report| py_restore(py, report))
@@ -186,11 +176,7 @@ impl PyStore {
         })
     }
 
-    fn compact_generation_to(
-        &self,
-        py: Python<'_>,
-        destination: PathBuf,
-    ) -> PyResult<Py<PyDict>> {
+    fn compact_generation_to(&self, py: Python<'_>, destination: PathBuf) -> PyResult<Py<PyDict>> {
         with_store(&self.slot, |store| {
             store
                 .compact_generation_to(destination)
