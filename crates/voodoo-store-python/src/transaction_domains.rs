@@ -111,12 +111,7 @@ impl PyTransaction {
         })
     }
 
-    fn link_object(
-        &mut self,
-        namespace: &[u8],
-        name: &[u8],
-        id: &[u8],
-    ) -> PyResult<usize> {
+    fn link_object(&mut self, namespace: &[u8], name: &[u8], id: &[u8]) -> PyResult<usize> {
         let id = parse_object_id(id)?;
         self.stage_operation(PendingOperation::LinkObject {
             namespace: namespace.to_vec(),
@@ -208,12 +203,7 @@ impl PyTransaction {
         })
     }
 
-    fn wait_until(
-        &mut self,
-        id: &[u8],
-        resume_at_ms: i64,
-        now_ms: i64,
-    ) -> PyResult<usize> {
+    fn wait_until(&mut self, id: &[u8], resume_at_ms: i64, now_ms: i64) -> PyResult<usize> {
         let id = parse_workflow_id(id)?;
         self.stage_operation(PendingOperation::WaitUntil {
             id,
@@ -222,12 +212,7 @@ impl PyTransaction {
         })
     }
 
-    fn complete_workflow(
-        &mut self,
-        id: &[u8],
-        final_state: &[u8],
-        now_ms: i64,
-    ) -> PyResult<usize> {
+    fn complete_workflow(&mut self, id: &[u8], final_state: &[u8], now_ms: i64) -> PyResult<usize> {
         let id = parse_workflow_id(id)?;
         self.stage_operation(PendingOperation::CompleteWorkflow {
             id,
