@@ -89,9 +89,7 @@ impl PyStore {
     #[pyo3(signature = (limit = 100))]
     fn gc_orphan_objects(&self, py: Python<'_>, limit: usize) -> PyResult<Py<PyDict>> {
         with_store_mut(&self.slot, |store| {
-            let report = store
-                .gc_orphan_objects(limit)
-                .map_err(map_object_error)?;
+            let report = store.gc_orphan_objects(limit).map_err(map_object_error)?;
             let result = PyDict::new(py);
             result.set_item("scanned", report.scanned)?;
             result.set_item("referenced", report.referenced)?;
