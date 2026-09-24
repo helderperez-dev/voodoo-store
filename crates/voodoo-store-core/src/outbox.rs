@@ -71,6 +71,22 @@ impl Transaction<'_> {
 }
 
 impl Store {
+    /// Emits one outbox event in its own durable transaction.
+    ///
+    /// Cross-domain callers should prefer `Transaction::emit_event` so the
+    /// event can share a commit boundary with application state and work.
+    pub fn emit_outbox_event(
+        &mut self,
+        topic: impl AsRef<[u8]>,
+        payload: impl AsRef<[u8]>,
+        created_at_ms: i64,
+    ) -> Result<OutboxEventId, OutboxError> {
+        let mut tx = self.begin()?;
+        let id = tx.emit_event(topic, payload, created_at_ms)?;
+        tx.commit()?;
+        Ok(id)
+    }
+
     /// Returns pending outbox events ordered by transaction id and event id.
     pub fn outbox_events_after(
         &self,
