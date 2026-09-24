@@ -275,6 +275,7 @@ This milestone is intentionally about **convergence, not new storage semantics**
 - [x] Python RPC
 - [x] Python CDC/change-feed inspection
 - [x] Python operational health/storage/checkpoint/compaction/restore surfaces
+- [x] Python native Workflow/HITL state, signals, timers, history and parent/child inspection
 - [ ] Python cross-domain transaction surface matching the Rust transaction model
 - [ ] Voodoo Events adapter migrated from KV compatibility storage to native messaging
 - [ ] Voodoo ObjectStore adapter migrated from KV compatibility storage to native Objects
