@@ -6,7 +6,7 @@ use pyo3::create_exception;
 use pyo3::exceptions::{PyException, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyModule};
-use voodoo_store_core::{Durability, EngineError, Store, StoreOptions, VerificationReport};
+use voodoo_store_core::{Durability, EngineError, JobSpec, Store, StoreOptions, VerificationReport};
 
 create_exception!(_native, VoodooStoreError, PyException);
 create_exception!(_native, StoreClosedError, VoodooStoreError);
@@ -212,6 +212,23 @@ enum PendingOperation {
         value: Vec<u8>,
         indexes: Vec<voodoo_store_core::IndexValue>,
     },
+    EnqueueJob {
+        spec: JobSpec,
+        now_ms: i64,
+    },
+    AppendStream {
+        stream: Vec<u8>,
+        payload: Vec<u8>,
+    },
+    PublishTopic {
+        topic: Vec<u8>,
+        payload: Vec<u8>,
+    },
+    EmitEvent {
+        topic: Vec<u8>,
+        payload: Vec<u8>,
+        created_at_ms: i64,
+    },
 }
 
 enum PendingLookup<'a> {
@@ -328,6 +345,26 @@ impl PyTransaction {
                         indexes,
                     } => {
                         tx.upsert_record(collection, primary_key, value, indexes)
+                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
+                    }
+                    PendingOperation::EnqueueJob { spec, now_ms } => {
+                        tx.enqueue_job(spec.clone(), *now_ms)
+                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
+                    }
+                    PendingOperation::AppendStream { stream, payload } => {
+                        tx.append_stream(stream, payload)
+                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
+                    }
+                    PendingOperation::PublishTopic { topic, payload } => {
+                        tx.publish_topic(topic, payload)
+                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
+                    }
+                    PendingOperation::EmitEvent {
+                        topic,
+                        payload,
+                        created_at_ms,
+                    } => {
+                        tx.emit_event(topic, payload, *created_at_ms)
                             .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
                     }
                 }
