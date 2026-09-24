@@ -2,7 +2,7 @@
 
 The roadmap is intentionally bottom-up. Features that depend on durability, ordering, or transactions do not advance until the layer below has crash/fault coverage.
 
-## Current position — Python v0.2.2 published; 0.3 Native Surface Convergence next
+## Current position — Python v0.2.2 published; 0.3 Native Surface Convergence active
 
 Voodoo Store is already beyond a KV/queue prototype. The current single-node engine persists structured data, background work, scheduling, messaging, objects and workflow state in one `.vstore` without requiring external infrastructure.
 
@@ -267,13 +267,13 @@ This milestone is intentionally about **convergence, not new storage semantics**
 - [x] Python KV and transaction baseline
 - [x] Python Collections CRUD and exact secondary-index lookup
 - [x] Python Jobs, Scheduler/Cron and Triggers
-- [ ] Python native range-query surface
-- [ ] Python native Streams / Topics / durable subscription cursors
-- [ ] Python native Objects / references / orphan GC
-- [ ] Python Consumer Groups
-- [ ] Python Outbox
-- [ ] Python RPC
-- [ ] Python CDC/change-feed inspection
+- [x] Python native range-query surface
+- [x] Python native Streams / Topics / durable subscription cursors
+- [x] Python native Objects / references / orphan GC
+- [x] Python Consumer Groups
+- [x] Python Outbox
+- [x] Python RPC
+- [x] Python CDC/change-feed inspection
 - [ ] Python operational health/storage/checkpoint/compaction/restore surfaces
 - [ ] Python cross-domain transaction surface matching the Rust transaction model
 - [ ] Voodoo Events adapter migrated from KV compatibility storage to native messaging
