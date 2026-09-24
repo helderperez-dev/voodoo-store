@@ -52,11 +52,7 @@ impl PyStore {
         })
     }
 
-    fn changes_for_transaction(
-        &self,
-        py: Python<'_>,
-        tx_id: u64,
-    ) -> PyResult<Vec<Py<PyDict>>> {
+    fn changes_for_transaction(&self, py: Python<'_>, tx_id: u64) -> PyResult<Vec<Py<PyDict>>> {
         with_store(&self.slot, |store| {
             store
                 .changes_for_transaction(tx_id)
