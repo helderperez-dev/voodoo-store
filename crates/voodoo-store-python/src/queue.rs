@@ -1,19 +1,11 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
-use voodoo_store_core::{PushOptions, QueueError, QueueMessage, QueueState};
+use voodoo_store_core::{PushOptions, QueueError, QueueMessage};
 
 use super::{PyStore, VoodooStoreError, with_store_mut};
 
 fn map_error(error: QueueError) -> PyErr {
     VoodooStoreError::new_err(error.to_string())
-}
-
-fn state_name(state: QueueState) -> &'static str {
-    match state {
-        QueueState::Ready => "ready",
-        QueueState::Leased => "leased",
-        QueueState::Dead => "dead",
-    }
 }
 
 fn py_message(py: Python<'_>, message: QueueMessage) -> PyResult<Py<PyDict>> {
