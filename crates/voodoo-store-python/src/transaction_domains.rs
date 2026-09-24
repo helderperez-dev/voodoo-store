@@ -29,8 +29,7 @@ impl PyTransaction {
         max_attempts: u32,
         retry_backoff_ms: u64,
         idempotency_key: Option<Vec<u8>>,
-    ) -> PyResult<()> {
-        self.ensure_open()?;
+    ) -> PyResult<usize> {
         let mut spec = JobSpec::new(handler.to_vec(), payload.to_vec());
         spec.available_at_ms = available_at_ms;
         spec.deadline_ms = deadline_ms;
@@ -38,9 +37,7 @@ impl PyTransaction {
         spec.max_attempts = max_attempts;
         spec.retry_backoff_ms = retry_backoff_ms;
         spec.idempotency_key = idempotency_key;
-        self.operations
-            .push(PendingOperation::EnqueueJob { spec, now_ms });
-        Ok(())
+        self.stage_operation(PendingOperation::EnqueueJob { spec, now_ms })
     }
 
     #[pyo3(signature = (queue, payload, *, available_at_ms = 0, priority = 0))]
@@ -50,42 +47,34 @@ impl PyTransaction {
         payload: &[u8],
         available_at_ms: i64,
         priority: i32,
-    ) -> PyResult<()> {
-        self.ensure_open()?;
-        self.operations.push(PendingOperation::PushQueue {
+    ) -> PyResult<usize> {
+        self.stage_operation(PendingOperation::PushQueue {
             queue: queue.to_vec(),
             payload: payload.to_vec(),
             available_at_ms,
             priority,
-        });
-        Ok(())
+        })
     }
 
-    fn append_stream(&mut self, stream: &[u8], payload: &[u8]) -> PyResult<()> {
-        self.ensure_open()?;
-        self.operations.push(PendingOperation::AppendStream {
+    fn append_stream(&mut self, stream: &[u8], payload: &[u8]) -> PyResult<usize> {
+        self.stage_operation(PendingOperation::AppendStream {
             stream: stream.to_vec(),
             payload: payload.to_vec(),
-        });
-        Ok(())
+        })
     }
 
-    fn publish_topic(&mut self, topic: &[u8], payload: &[u8]) -> PyResult<()> {
-        self.ensure_open()?;
-        self.operations.push(PendingOperation::PublishTopic {
+    fn publish_topic(&mut self, topic: &[u8], payload: &[u8]) -> PyResult<usize> {
+        self.stage_operation(PendingOperation::PublishTopic {
             topic: topic.to_vec(),
             payload: payload.to_vec(),
-        });
-        Ok(())
+        })
     }
 
-    fn emit_event(&mut self, topic: &[u8], payload: &[u8], created_at_ms: i64) -> PyResult<()> {
-        self.ensure_open()?;
-        self.operations.push(PendingOperation::EmitEvent {
+    fn emit_event(&mut self, topic: &[u8], payload: &[u8], created_at_ms: i64) -> PyResult<usize> {
+        self.stage_operation(PendingOperation::EmitEvent {
             topic: topic.to_vec(),
             payload: payload.to_vec(),
             created_at_ms,
-        });
-        Ok(())
+        })
     }
 }

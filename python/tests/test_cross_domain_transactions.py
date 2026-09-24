@@ -86,3 +86,50 @@ def test_cross_domain_transaction_survives_reopen(tmp_path):
         assert len(reopened.list_jobs()) == 1
         assert reopened.read_stream(b"audit", 0, 10) == [(0, b"committed")]
         assert reopened.outbox_len() == 1
+
+
+def test_cross_domain_commit_returns_generated_receipts(tmp_path):
+    path = tmp_path / "cross-domain-results.vstore"
+
+    with Store.open(path) as store:
+        tx = store.transaction()
+        tx.put(b"order:7", b"paid")
+        job_op = tx.enqueue_job(b"receipt", b"order:7", 100)
+        queue_op = tx.push_queue(b"receipts", b"order:7", priority=4)
+        stream_op = tx.append_stream(b"orders", b"order:7:paid")
+        topic_op = tx.publish_topic(b"notifications", b"order:7")
+        outbox_op = tx.emit_event(b"order.paid", b"order:7", 100)
+
+        results = tx.commit_with_results()
+
+        assert results[job_op]["kind"] == "job"
+        assert len(results[job_op]["id"]) == 16
+
+        assert results[queue_op] == {
+            "kind": "queue",
+            "id": 1,
+        }
+        assert results[stream_op] == {
+            "kind": "stream",
+            "offset": 0,
+        }
+        assert results[topic_op] == {
+            "kind": "topic",
+            "offset": 0,
+        }
+        assert results[outbox_op]["kind"] == "outbox"
+        assert isinstance(results[outbox_op]["tx_id"], int)
+        assert len(results[outbox_op]["nonce"]) == 16
+
+        jobs = store.list_jobs()
+        assert len(jobs) == 1
+        assert jobs[0]["id"] == results[job_op]["id"]
+
+        queued = store.claim_queue(b"receipts", 100, 100)
+        assert queued is not None
+        assert queued["id"] == results[queue_op]["id"]
+
+        outbox = store.outbox_events_after(None, 10)
+        assert len(outbox) == 1
+        assert outbox[0]["tx_id"] == results[outbox_op]["tx_id"]
+        assert outbox[0]["nonce"] == results[outbox_op]["nonce"]

@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use pyo3::create_exception;
 use pyo3::exceptions::{PyException, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyModule};
+use pyo3::types::{PyBytes, PyDict, PyModule};
 use voodoo_store_core::{Durability, EngineError, JobSpec, Store, StoreOptions, VerificationReport};
 
 create_exception!(_native, VoodooStoreError, PyException);
@@ -237,6 +237,18 @@ enum PendingOperation {
     },
 }
 
+#[derive(Debug)]
+enum OperationResult {
+    JobId([u8; 16]),
+    QueueId(u64),
+    StreamOffset(u64),
+    TopicOffset(u64),
+    OutboxId {
+        tx_id: u64,
+        nonce: [u8; 16],
+    },
+}
+
 enum PendingLookup<'a> {
     Value(&'a [u8]),
     Deleted,
@@ -328,75 +340,18 @@ impl PyTransaction {
     }
 
     fn commit(&mut self) -> PyResult<()> {
-        self.ensure_open()?;
-        let mut store = self
-            .store
-            .take()
-            .ok_or_else(|| TransactionFinishedError::new_err("transaction is finished"))?;
+        self.commit_operations().map(|_| ())
+    }
 
-        let result = (|| {
-            let mut tx = store.begin().map_err(map_engine_error)?;
-            for operation in &self.operations {
-                match operation {
-                    PendingOperation::Put(key, value) => {
-                        tx.put(key, value).map_err(map_engine_error)?;
-                    }
-                    PendingOperation::Delete(key) => {
-                        tx.delete(key).map_err(map_engine_error)?;
-                    }
-                    PendingOperation::UpsertRecord {
-                        collection,
-                        primary_key,
-                        value,
-                        indexes,
-                    } => {
-                        tx.upsert_record(collection, primary_key, value, indexes)
-                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
-                    }
-                    PendingOperation::EnqueueJob { spec, now_ms } => {
-                        tx.enqueue_job(spec.clone(), *now_ms)
-                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
-                    }
-                    PendingOperation::PushQueue {
-                        queue,
-                        payload,
-                        available_at_ms,
-                        priority,
-                    } => {
-                        tx.push_queue(
-                            queue,
-                            payload,
-                            voodoo_store_core::PushOptions {
-                                available_at_ms: *available_at_ms,
-                                priority: *priority,
-                            },
-                        )
-                        .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
-                    }
-                    PendingOperation::AppendStream { stream, payload } => {
-                        tx.append_stream(stream, payload)
-                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
-                    }
-                    PendingOperation::PublishTopic { topic, payload } => {
-                        tx.publish_topic(topic, payload)
-                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
-                    }
-                    PendingOperation::EmitEvent {
-                        topic,
-                        payload,
-                        created_at_ms,
-                    } => {
-                        tx.emit_event(topic, payload, *created_at_ms)
-                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
-                    }
-                }
+    fn commit_with_results(&mut self, py: Python<'_>) -> PyResult<Py<PyDict>> {
+        let results = self.commit_operations()?;
+        let output = PyDict::new(py);
+        for (index, result) in results.into_iter().enumerate() {
+            if let Some(result) = result {
+                output.set_item(index, py_operation_result(py, result)?)?;
             }
-            tx.commit().map_err(map_engine_error)
-        })();
-
-        self.finished = true;
-        self.restore_store(store)?;
-        result
+        }
+        Ok(output.unbind())
     }
 
     fn rollback(&mut self) -> PyResult<()> {
@@ -432,6 +387,104 @@ impl PyTransaction {
 }
 
 impl PyTransaction {
+    fn stage_operation(&mut self, operation: PendingOperation) -> PyResult<usize> {
+        self.ensure_open()?;
+        let index = self.operations.len();
+        self.operations.push(operation);
+        Ok(index)
+    }
+
+    fn commit_operations(&mut self) -> PyResult<Vec<Option<OperationResult>>> {
+        self.ensure_open()?;
+        let mut store = self
+            .store
+            .take()
+            .ok_or_else(|| TransactionFinishedError::new_err("transaction is finished"))?;
+
+        let result = (|| {
+            let mut tx = store.begin().map_err(map_engine_error)?;
+            let mut results = Vec::with_capacity(self.operations.len());
+            for operation in &self.operations {
+                let operation_result = match operation {
+                    PendingOperation::Put(key, value) => {
+                        tx.put(key, value).map_err(map_engine_error)?;
+                        None
+                    }
+                    PendingOperation::Delete(key) => {
+                        tx.delete(key).map_err(map_engine_error)?;
+                        None
+                    }
+                    PendingOperation::UpsertRecord {
+                        collection,
+                        primary_key,
+                        value,
+                        indexes,
+                    } => {
+                        tx.upsert_record(collection, primary_key, value, indexes)
+                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
+                        None
+                    }
+                    PendingOperation::EnqueueJob { spec, now_ms } => {
+                        let id = tx
+                            .enqueue_job(spec.clone(), *now_ms)
+                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
+                        Some(OperationResult::JobId(id))
+                    }
+                    PendingOperation::PushQueue {
+                        queue,
+                        payload,
+                        available_at_ms,
+                        priority,
+                    } => {
+                        let id = tx
+                            .push_queue(
+                                queue,
+                                payload,
+                                voodoo_store_core::PushOptions {
+                                    available_at_ms: *available_at_ms,
+                                    priority: *priority,
+                                },
+                            )
+                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
+                        Some(OperationResult::QueueId(id))
+                    }
+                    PendingOperation::AppendStream { stream, payload } => {
+                        let offset = tx
+                            .append_stream(stream, payload)
+                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
+                        Some(OperationResult::StreamOffset(offset))
+                    }
+                    PendingOperation::PublishTopic { topic, payload } => {
+                        let offset = tx
+                            .publish_topic(topic, payload)
+                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
+                        Some(OperationResult::TopicOffset(offset))
+                    }
+                    PendingOperation::EmitEvent {
+                        topic,
+                        payload,
+                        created_at_ms,
+                    } => {
+                        let id = tx
+                            .emit_event(topic, payload, *created_at_ms)
+                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
+                        Some(OperationResult::OutboxId {
+                            tx_id: id.tx_id,
+                            nonce: id.nonce,
+                        })
+                    }
+                };
+                results.push(operation_result);
+            }
+            tx.commit().map_err(map_engine_error)?;
+            Ok(results)
+        })();
+
+        self.finished = true;
+        self.restore_store(store)?;
+        result
+    }
+
     fn ensure_open(&self) -> PyResult<()> {
         if self.finished || self.store.is_none() {
             Err(TransactionFinishedError::new_err("transaction is finished"))
@@ -482,6 +535,34 @@ impl Drop for PyTransaction {
             }
         }
     }
+}
+
+fn py_operation_result(py: Python<'_>, result: OperationResult) -> PyResult<Py<PyDict>> {
+    let output = PyDict::new(py);
+    match result {
+        OperationResult::JobId(id) => {
+            output.set_item("kind", "job")?;
+            output.set_item("id", PyBytes::new(py, &id))?;
+        }
+        OperationResult::QueueId(id) => {
+            output.set_item("kind", "queue")?;
+            output.set_item("id", id)?;
+        }
+        OperationResult::StreamOffset(offset) => {
+            output.set_item("kind", "stream")?;
+            output.set_item("offset", offset)?;
+        }
+        OperationResult::TopicOffset(offset) => {
+            output.set_item("kind", "topic")?;
+            output.set_item("offset", offset)?;
+        }
+        OperationResult::OutboxId { tx_id, nonce } => {
+            output.set_item("kind", "outbox")?;
+            output.set_item("tx_id", tx_id)?;
+            output.set_item("nonce", PyBytes::new(py, &nonce))?;
+        }
+    }
+    Ok(output.unbind())
 }
 
 fn parse_durability(value: &str) -> PyResult<Durability> {
