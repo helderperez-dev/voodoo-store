@@ -9,3 +9,4 @@ mod operations;
 mod outbox;
 mod rpc;
 mod schedule;
+mod transaction_domains;
