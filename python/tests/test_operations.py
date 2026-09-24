@@ -93,5 +93,5 @@ def test_compact_snapshot_and_generation_are_verified(tmp_path: Path) -> None:
         assert store.get(b"counter") == b"9"
 
     with Store.open(generation) as store:
-        assert Store.verify(generation).store_id == source_id
+        assert store.health_report()["store_id"] == source_id
         assert store.get(b"counter") == b"9"
