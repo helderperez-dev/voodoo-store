@@ -7,6 +7,7 @@ mod messaging;
 mod objects;
 mod operations;
 mod outbox;
+mod queue;
 mod rpc;
 mod schedule;
 mod transaction_domains;

@@ -267,6 +267,7 @@ This milestone is intentionally about **convergence, not new storage semantics**
 - [x] Python KV and transaction baseline
 - [x] Python Collections CRUD and exact secondary-index lookup
 - [x] Python Jobs, Scheduler/Cron and Triggers
+- [x] Python native Queue push/claim/ACK/NACK/dead-letter/stats surface
 - [x] Python native range-query surface
 - [x] Python native Streams / Topics / durable subscription cursors
 - [x] Python native Objects / references / orphan GC

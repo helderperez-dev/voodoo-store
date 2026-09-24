@@ -17,6 +17,7 @@ def test_heterogeneous_operations_share_one_commit(tmp_path):
                 1_000,
                 idempotency_key=b"receipt:42",
             )
+            tx.push_queue(b"receipts", b"order:42", priority=5)
             tx.append_stream(b"orders", b"order:42:paid")
             tx.publish_topic(b"notifications", b"order:42")
             tx.emit_event(b"order.paid", b"order:42", 1_000)
@@ -29,6 +30,15 @@ def test_heterogeneous_operations_share_one_commit(tmp_path):
         assert jobs[0]["payload"] == b"order:42"
         assert jobs[0]["idempotency_key"] == b"receipt:42"
 
+        changes = store.changes_after(None, 100)
+        assert changes
+        assert len({change["tx_id"] for change in changes}) == 1
+
+        queued = store.claim_queue(b"receipts", 1_000, 100)
+        assert queued is not None
+        assert queued["payload"] == b"order:42"
+        assert queued["priority"] == 5
+
         assert store.read_stream(b"orders", 0, 10) == [(0, b"order:42:paid")]
         assert store.read_topic(b"notifications", 0, 10) == [(0, b"order:42")]
 
@@ -36,10 +46,6 @@ def test_heterogeneous_operations_share_one_commit(tmp_path):
         assert len(outbox) == 1
         assert outbox[0]["topic"] == b"order.paid"
         assert outbox[0]["payload"] == b"order:42"
-
-        changes = store.changes_after(None, 100)
-        assert changes
-        assert len({change["tx_id"] for change in changes}) == 1
 
 
 def test_heterogeneous_transaction_rollback_hides_every_domain(tmp_path):
@@ -50,6 +56,7 @@ def test_heterogeneous_transaction_rollback_hides_every_domain(tmp_path):
             with store.transaction() as tx:
                 tx.put(b"order:42:status", b"paid")
                 tx.enqueue_job(b"email.send_receipt", b"order:42", 1_000)
+                tx.push_queue(b"receipts", b"order:42")
                 tx.append_stream(b"orders", b"order:42:paid")
                 tx.publish_topic(b"notifications", b"order:42")
                 tx.emit_event(b"order.paid", b"order:42", 1_000)
@@ -57,6 +64,7 @@ def test_heterogeneous_transaction_rollback_hides_every_domain(tmp_path):
 
         assert store.get(b"order:42:status") is None
         assert store.list_jobs() == []
+        assert store.queue_stats(b"receipts")["total"] == 0
         assert store.read_stream(b"orders", 0, 10) == []
         assert store.read_topic(b"notifications", 0, 10) == []
         assert store.outbox_len() == 0
