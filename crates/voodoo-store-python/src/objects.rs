@@ -86,6 +86,30 @@ impl PyStore {
         })
     }
 
+    #[pyo3(signature = (namespace, name_prefix = b""))]
+    fn list_object_refs(
+        &self,
+        py: Python<'_>,
+        namespace: &[u8],
+        name_prefix: &[u8],
+    ) -> PyResult<Vec<(Py<PyBytes>, Py<PyBytes>)>> {
+        with_store(&self.slot, |store| {
+            store
+                .list_object_refs(namespace, name_prefix)
+                .map(|refs| {
+                    refs.into_iter()
+                        .map(|(name, id)| {
+                            (
+                                PyBytes::new(py, &name).unbind(),
+                                PyBytes::new(py, &id).unbind(),
+                            )
+                        })
+                        .collect()
+                })
+                .map_err(map_object_error)
+        })
+    }
+
     #[pyo3(signature = (limit = 100))]
     fn gc_orphan_objects(&self, py: Python<'_>, limit: usize) -> PyResult<Py<PyDict>> {
         with_store_mut(&self.slot, |store| {
