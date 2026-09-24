@@ -46,3 +46,25 @@ def test_native_object_unlink_makes_object_collectable(tmp_path):
         report = store.gc_orphan_objects()
         assert report["removed"] == 1
         assert store.get_object(object_id) is None
+
+
+def test_native_object_refs_can_be_listed_by_namespace_and_prefix(tmp_path):
+    with Store.open(tmp_path / "object-list.vstore") as store:
+        a = store.put_object(b"a")
+        b = store.put_object(b"b")
+        c = store.put_object(b"c")
+        store.link_object(b"files", b"reports/2024.pdf", a)
+        store.link_object(b"files", b"reports/2025.pdf", b)
+        store.link_object(b"files", b"images/logo.png", c)
+        store.link_object(b"avatars", b"user-1", a)
+
+        assert store.list_object_refs(b"files") == [
+            (b"images/logo.png", c),
+            (b"reports/2024.pdf", a),
+            (b"reports/2025.pdf", b),
+        ]
+        assert store.list_object_refs(b"files", b"reports/") == [
+            (b"reports/2024.pdf", a),
+            (b"reports/2025.pdf", b),
+        ]
+        assert store.list_object_refs(b"avatars") == [(b"user-1", a)]
