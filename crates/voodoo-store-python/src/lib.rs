@@ -216,6 +216,12 @@ enum PendingOperation {
         spec: JobSpec,
         now_ms: i64,
     },
+    PushQueue {
+        queue: Vec<u8>,
+        payload: Vec<u8>,
+        available_at_ms: i64,
+        priority: i32,
+    },
     AppendStream {
         stream: Vec<u8>,
         payload: Vec<u8>,
@@ -350,6 +356,22 @@ impl PyTransaction {
                     PendingOperation::EnqueueJob { spec, now_ms } => {
                         tx.enqueue_job(spec.clone(), *now_ms)
                             .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
+                    }
+                    PendingOperation::PushQueue {
+                        queue,
+                        payload,
+                        available_at_ms,
+                        priority,
+                    } => {
+                        tx.push_queue(
+                            queue,
+                            payload,
+                            voodoo_store_core::PushOptions {
+                                available_at_ms: *available_at_ms,
+                                priority: *priority,
+                            },
+                        )
+                        .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
                     }
                     PendingOperation::AppendStream { stream, payload } => {
                         tx.append_stream(stream, payload)
