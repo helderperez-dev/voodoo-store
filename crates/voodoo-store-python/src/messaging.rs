@@ -94,7 +94,9 @@ impl PyStore {
     ) -> PyResult<Vec<PyStreamEntry>> {
         with_store_mut(&self.slot, |store| {
             let topic = store.topic(topic).map_err(map_messaging_error)?;
-            let entries = topic.poll(subscription, limit).map_err(map_messaging_error)?;
+            let entries = topic
+                .poll(subscription, limit)
+                .map_err(map_messaging_error)?;
             Ok(py_entries(py, entries))
         })
     }
