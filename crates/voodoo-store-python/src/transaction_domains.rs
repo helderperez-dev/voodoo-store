@@ -17,6 +17,7 @@ impl PyTransaction {
         retry_backoff_ms = 1000,
         idempotency_key = None
     ))]
+    #[allow(clippy::too_many_arguments)]
     fn enqueue_job(
         &mut self,
         handler: &[u8],
