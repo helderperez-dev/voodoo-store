@@ -5,6 +5,7 @@ mod consumer_group;
 mod job;
 mod messaging;
 mod objects;
+mod operations;
 mod outbox;
 mod rpc;
 mod schedule;

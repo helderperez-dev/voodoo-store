@@ -274,7 +274,7 @@ This milestone is intentionally about **convergence, not new storage semantics**
 - [x] Python Outbox
 - [x] Python RPC
 - [x] Python CDC/change-feed inspection
-- [ ] Python operational health/storage/checkpoint/compaction/restore surfaces
+- [x] Python operational health/storage/checkpoint/compaction/restore surfaces
 - [ ] Python cross-domain transaction surface matching the Rust transaction model
 - [ ] Voodoo Events adapter migrated from KV compatibility storage to native messaging
 - [ ] Voodoo ObjectStore adapter migrated from KV compatibility storage to native Objects
