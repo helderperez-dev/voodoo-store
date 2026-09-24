@@ -235,6 +235,73 @@ enum PendingOperation {
         payload: Vec<u8>,
         created_at_ms: i64,
     },
+    PutObject {
+        content: Vec<u8>,
+    },
+    PutLinkedObject {
+        content: Vec<u8>,
+        namespace: Vec<u8>,
+        name: Vec<u8>,
+    },
+    LinkObject {
+        namespace: Vec<u8>,
+        name: Vec<u8>,
+        id: [u8; 32],
+    },
+    UnlinkObject {
+        namespace: Vec<u8>,
+        name: Vec<u8>,
+    },
+    RequestRpc {
+        method: Vec<u8>,
+        payload: Vec<u8>,
+        created_at_ms: i64,
+        deadline_ms: Option<i64>,
+    },
+    CreateWorkflow {
+        workflow_type: Vec<u8>,
+        initial_step: Vec<u8>,
+        initial_state: Vec<u8>,
+        parent_id: Option<[u8; 16]>,
+        now_ms: i64,
+    },
+    SetWorkflowStep {
+        id: [u8; 16],
+        step: Vec<u8>,
+        state: Vec<u8>,
+        now_ms: i64,
+    },
+    WaitForSignal {
+        id: [u8; 16],
+        signal: Vec<u8>,
+        now_ms: i64,
+    },
+    SignalWorkflow {
+        id: [u8; 16],
+        signal: Vec<u8>,
+        payload: Vec<u8>,
+        now_ms: i64,
+    },
+    WaitUntil {
+        id: [u8; 16],
+        resume_at_ms: i64,
+        now_ms: i64,
+    },
+    CompleteWorkflow {
+        id: [u8; 16],
+        final_state: Vec<u8>,
+        now_ms: i64,
+    },
+    FailWorkflow {
+        id: [u8; 16],
+        error: Vec<u8>,
+        now_ms: i64,
+    },
+    CancelWorkflow {
+        id: [u8; 16],
+        reason: Vec<u8>,
+        now_ms: i64,
+    },
 }
 
 #[derive(Debug)]
@@ -247,6 +314,15 @@ enum OperationResult {
         tx_id: u64,
         nonce: [u8; 16],
     },
+    ObjectId([u8; 32]),
+    ObjectUnlinked(bool),
+    RpcId {
+        tx_id: u64,
+        nonce: [u8; 16],
+    },
+    WorkflowId([u8; 16]),
+    WorkflowSignaled(bool),
+    WorkflowCancelled(bool),
 }
 
 enum PendingLookup<'a> {
@@ -473,6 +549,126 @@ impl PyTransaction {
                             nonce: id.nonce,
                         })
                     }
+                    PendingOperation::PutObject { content } => {
+                        let id = tx
+                            .put_object(content)
+                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
+                        Some(OperationResult::ObjectId(id))
+                    }
+                    PendingOperation::PutLinkedObject {
+                        content,
+                        namespace,
+                        name,
+                    } => {
+                        let id = tx
+                            .put_object(content)
+                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
+                        tx.link_object(namespace, name, &id)
+                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
+                        Some(OperationResult::ObjectId(id))
+                    }
+                    PendingOperation::LinkObject {
+                        namespace,
+                        name,
+                        id,
+                    } => {
+                        tx.link_object(namespace, name, id)
+                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
+                        None
+                    }
+                    PendingOperation::UnlinkObject { namespace, name } => {
+                        let removed = tx
+                            .unlink_object(namespace, name)
+                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
+                        Some(OperationResult::ObjectUnlinked(removed))
+                    }
+                    PendingOperation::RequestRpc {
+                        method,
+                        payload,
+                        created_at_ms,
+                        deadline_ms,
+                    } => {
+                        let id = tx
+                            .request_rpc(method, payload, *created_at_ms, *deadline_ms)
+                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
+                        Some(OperationResult::RpcId {
+                            tx_id: id.tx_id,
+                            nonce: id.nonce,
+                        })
+                    }
+                    PendingOperation::CreateWorkflow {
+                        workflow_type,
+                        initial_step,
+                        initial_state,
+                        parent_id,
+                        now_ms,
+                    } => {
+                        let id = tx
+                            .create_workflow(
+                                workflow_type,
+                                initial_step,
+                                initial_state,
+                                *parent_id,
+                                *now_ms,
+                            )
+                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
+                        Some(OperationResult::WorkflowId(id))
+                    }
+                    PendingOperation::SetWorkflowStep {
+                        id,
+                        step,
+                        state,
+                        now_ms,
+                    } => {
+                        tx.set_workflow_step(id, step, state, *now_ms)
+                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
+                        None
+                    }
+                    PendingOperation::WaitForSignal { id, signal, now_ms } => {
+                        tx.wait_for_signal(id, signal, *now_ms)
+                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
+                        None
+                    }
+                    PendingOperation::SignalWorkflow {
+                        id,
+                        signal,
+                        payload,
+                        now_ms,
+                    } => {
+                        let signaled = tx
+                            .signal_workflow(id, signal, payload, *now_ms)
+                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
+                        Some(OperationResult::WorkflowSignaled(signaled))
+                    }
+                    PendingOperation::WaitUntil {
+                        id,
+                        resume_at_ms,
+                        now_ms,
+                    } => {
+                        tx.wait_until(id, *resume_at_ms, *now_ms)
+                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
+                        None
+                    }
+                    PendingOperation::CompleteWorkflow {
+                        id,
+                        final_state,
+                        now_ms,
+                    } => {
+                        tx.complete_workflow(id, final_state, *now_ms)
+                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
+                        None
+                    }
+                    PendingOperation::FailWorkflow { id, error, now_ms } => {
+                        tx.fail_workflow(id, error, *now_ms)
+                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
+                        None
+                    }
+                    PendingOperation::CancelWorkflow { id, reason, now_ms } => {
+                        let cancelled = tx
+                            .cancel_workflow(id, reason, *now_ms)
+                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
+                        Some(OperationResult::WorkflowCancelled(cancelled))
+                    }
                 };
                 results.push(operation_result);
             }
@@ -560,6 +756,31 @@ fn py_operation_result(py: Python<'_>, result: OperationResult) -> PyResult<Py<P
             output.set_item("kind", "outbox")?;
             output.set_item("tx_id", tx_id)?;
             output.set_item("nonce", PyBytes::new(py, &nonce))?;
+        }
+        OperationResult::ObjectId(id) => {
+            output.set_item("kind", "object")?;
+            output.set_item("id", PyBytes::new(py, &id))?;
+        }
+        OperationResult::ObjectUnlinked(removed) => {
+            output.set_item("kind", "object_unlink")?;
+            output.set_item("removed", removed)?;
+        }
+        OperationResult::RpcId { tx_id, nonce } => {
+            output.set_item("kind", "rpc")?;
+            output.set_item("tx_id", tx_id)?;
+            output.set_item("nonce", PyBytes::new(py, &nonce))?;
+        }
+        OperationResult::WorkflowId(id) => {
+            output.set_item("kind", "workflow")?;
+            output.set_item("id", PyBytes::new(py, &id))?;
+        }
+        OperationResult::WorkflowSignaled(signaled) => {
+            output.set_item("kind", "workflow_signal")?;
+            output.set_item("signaled", signaled)?;
+        }
+        OperationResult::WorkflowCancelled(cancelled) => {
+            output.set_item("kind", "workflow_cancel")?;
+            output.set_item("cancelled", cancelled)?;
         }
     }
     Ok(output.unbind())

@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import subprocess
+import sys
+import textwrap
+
 import pytest
 
 from voodoo_store import Store
@@ -133,3 +137,137 @@ def test_cross_domain_commit_returns_generated_receipts(tmp_path):
         assert len(outbox) == 1
         assert outbox[0]["tx_id"] == results[outbox_op]["tx_id"]
         assert outbox[0]["nonce"] == results[outbox_op]["nonce"]
+
+
+def test_cross_domain_results_cover_objects_rpc_and_workflow(tmp_path):
+    path = tmp_path / "cross-domain-full-results.vstore"
+
+    with Store.open(path) as store:
+        tx = store.transaction()
+        tx.put(b"order:9", b"awaiting-approval")
+        object_op = tx.put_linked_object(
+            b"invoice-bytes",
+            b"invoices",
+            b"order:9",
+        )
+        rpc_op = tx.request_rpc(
+            b"payments.capture",
+            b"order:9",
+            1_000,
+            2_000,
+        )
+        workflow_op = tx.create_workflow(
+            b"order-approval",
+            b"review",
+            b"pending",
+            1_000,
+        )
+
+        results = tx.commit_with_results()
+
+        object_id = results[object_op]["id"]
+        assert results[object_op]["kind"] == "object"
+        assert len(object_id) == 32
+        assert store.get_object(object_id) == b"invoice-bytes"
+        assert store.resolve_object_ref(b"invoices", b"order:9") == object_id
+
+        assert results[rpc_op]["kind"] == "rpc"
+        rpc_id = (results[rpc_op]["tx_id"], results[rpc_op]["nonce"])
+        pending = store.pending_rpc_requests_after(None, 10)
+        assert len(pending) == 1
+        assert pending[0]["id"] == rpc_id
+        assert pending[0]["method"] == b"payments.capture"
+
+        workflow_id = results[workflow_op]["id"]
+        assert results[workflow_op]["kind"] == "workflow"
+        assert len(workflow_id) == 16
+        workflow = store.get_workflow(workflow_id)
+        assert workflow is not None
+        assert workflow["workflow_type"] == b"order-approval"
+        assert workflow["status"] == "running"
+
+        changes = store.changes_after(None, 1_000)
+        assert changes
+        assert len({change["tx_id"] for change in changes}) == 1
+
+
+def test_existing_workflow_mutation_shares_application_transaction(tmp_path):
+    path = tmp_path / "cross-domain-workflow-mutation.vstore"
+
+    with Store.open(path) as store:
+        workflow_id = store.create_workflow(
+            b"approval",
+            b"review",
+            b"pending",
+            10,
+        )
+
+        tx = store.transaction()
+        tx.put(b"approval:state", b"waiting")
+        tx.wait_for_signal(workflow_id, b"approved", 11)
+        tx.commit()
+
+        assert store.get(b"approval:state") == b"waiting"
+        workflow = store.get_workflow(workflow_id)
+        assert workflow is not None
+        assert workflow["status"] == "waiting"
+        assert workflow["wait"] == {"kind": "signal", "name": b"approved"}
+
+        with pytest.raises(RuntimeError, match="rollback"):
+            with store.transaction() as rollback:
+                rollback.put(b"approval:state", b"should-not-stick")
+                rollback.signal_workflow(
+                    workflow_id,
+                    b"approved",
+                    b"yes",
+                    12,
+                )
+                raise RuntimeError("rollback")
+
+        assert store.get(b"approval:state") == b"waiting"
+        workflow = store.get_workflow(workflow_id)
+        assert workflow is not None
+        assert workflow["status"] == "waiting"
+        assert workflow["state"] == b"pending"
+
+
+def test_abrupt_process_exit_does_not_leak_staged_cross_domain_state(tmp_path):
+    path = tmp_path / "cross-domain-crash.vstore"
+    script = textwrap.dedent(
+        """
+        import os
+        import sys
+        from pathlib import Path
+
+        from voodoo_store import Store
+
+        store = Store.open(Path(sys.argv[1]))
+        tx = store.transaction()
+        tx.put(b"crash:state", b"uncommitted")
+        tx.enqueue_job(b"crash.job", b"payload", 100)
+        tx.push_queue(b"crash.queue", b"payload")
+        tx.append_stream(b"crash.stream", b"payload")
+        tx.publish_topic(b"crash.topic", b"payload")
+        tx.emit_event(b"crash.event", b"payload", 100)
+        tx.put_linked_object(b"blob", b"crash.refs", b"one")
+        tx.request_rpc(b"crash.rpc", b"payload", 100, 200)
+        tx.create_workflow(b"crash.workflow", b"start", b"state", 100)
+        os._exit(0)
+        """
+    )
+
+    subprocess.run(
+        [sys.executable, "-c", script, str(path)],
+        check=True,
+    )
+
+    with Store.open(path) as store:
+        assert store.get(b"crash:state") is None
+        assert store.list_jobs() == []
+        assert store.queue_stats(b"crash.queue")["total"] == 0
+        assert store.read_stream(b"crash.stream", 0, 10) == []
+        assert store.read_topic(b"crash.topic", 0, 10) == []
+        assert store.outbox_len() == 0
+        assert store.resolve_object_ref(b"crash.refs", b"one") is None
+        assert store.pending_rpc_requests_after(None, 10) == []
+        assert store.changes_after(None, 1_000) == []

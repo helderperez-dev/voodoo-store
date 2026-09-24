@@ -277,11 +277,11 @@ This milestone is intentionally about **convergence, not new storage semantics**
 - [x] Python CDC/change-feed inspection
 - [x] Python operational health/storage/checkpoint/compaction/restore surfaces
 - [x] Python native Workflow/HITL state, signals, timers, history and parent/child inspection
-- [ ] Python cross-domain transaction surface matching the Rust transaction model
+- [x] Python cross-domain transaction surface spanning KV, Collections, Jobs, Queues, Streams/Topics, Objects, Outbox, RPC and Workflows
 - [ ] Voodoo Events adapter migrated from KV compatibility storage to native messaging
 - [ ] Voodoo ObjectStore adapter migrated from KV compatibility storage to native Objects
 - [ ] Voodoo Model query path uses native indexes/range queries where declared
-- [ ] end-to-end crash/rollback acceptance proving heterogeneous operations share one commit boundary
+- [x] end-to-end crash/rollback acceptance proving heterogeneous operations share one commit boundary
 
 The 0.3 gate closes when application code can reach the Store's differentiating primitives without bypassing Runtime ownership or depending on internal KV encodings.
 
