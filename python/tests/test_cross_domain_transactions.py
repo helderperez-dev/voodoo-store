@@ -133,3 +133,79 @@ def test_cross_domain_commit_returns_generated_receipts(tmp_path):
         assert len(outbox) == 1
         assert outbox[0]["tx_id"] == results[outbox_op]["tx_id"]
         assert outbox[0]["nonce"] == results[outbox_op]["nonce"]
+
+
+def test_cross_domain_generated_results_can_be_chained(tmp_path):
+    path = tmp_path / "cross-domain-chaining.vstore"
+
+    with Store.open(path) as store:
+        tx = store.transaction()
+        tx.put(b"order:99", b"accepted")
+
+        object_op = tx.put_object(b"invoice-99")
+        tx.link_object(b"invoices", b"99", object_op)
+
+        rpc_op = tx.request_rpc(
+            b"payments.capture",
+            b"order:99",
+            1_000,
+            2_000,
+        )
+
+        workflow_op = tx.create_workflow(
+            b"order",
+            b"accepted",
+            b"99",
+            1_000,
+        )
+        tx.wait_for_workflow_signal(workflow_op, b"payment", 1_001)
+
+        results = tx.commit_with_results()
+
+        object_id = results[object_op]["id"]
+        assert results[object_op]["kind"] == "object"
+        assert len(object_id) == 32
+        assert store.resolve_object_ref(b"invoices", b"99") == object_id
+        assert store.get_object(object_id) == b"invoice-99"
+
+        assert results[rpc_op]["kind"] == "rpc"
+        pending = store.pending_rpc_requests_after(None, 10)
+        assert len(pending) == 1
+        assert pending[0]["tx_id"] == results[rpc_op]["tx_id"]
+        assert pending[0]["nonce"] == results[rpc_op]["nonce"]
+
+        workflow_id = results[workflow_op]["id"]
+        assert results[workflow_op]["kind"] == "workflow"
+        workflow = store.get_workflow(workflow_id)
+        assert workflow is not None
+        assert workflow["status"] == "waiting"
+        assert workflow["wait"] == {"kind": "signal", "name": b"payment"}
+
+        changes = store.changes_after(None, 500)
+        assert changes
+        assert len({change["tx_id"] for change in changes}) == 1
+
+
+def test_chained_cross_domain_rollback_hides_generated_domains(tmp_path):
+    path = tmp_path / "cross-domain-chaining-rollback.vstore"
+
+    with Store.open(path) as store:
+        with pytest.raises(RuntimeError, match="rollback"):
+            with store.transaction() as tx:
+                tx.put(b"order:99", b"accepted")
+                object_op = tx.put_object(b"invoice-99")
+                tx.link_object(b"invoices", b"99", object_op)
+                tx.request_rpc(b"payments.capture", b"order:99", 1_000)
+                workflow_op = tx.create_workflow(
+                    b"order",
+                    b"accepted",
+                    b"99",
+                    1_000,
+                )
+                tx.wait_for_workflow_signal(workflow_op, b"payment", 1_001)
+                raise RuntimeError("rollback")
+
+        assert store.get(b"order:99") is None
+        assert store.list_object_refs(b"invoices") == []
+        assert store.pending_rpc_requests_after(None, 10) == []
+        assert store.changes_after(None, 100) == []
