@@ -185,7 +185,7 @@ The main remaining work before a 1.0 claim includes:
 
 - continuous fuzzing and long-running durability soak tests;
 - filesystem/power-loss proof for generation activation and stronger repair tooling;
-- completing Python/native convergence for lifecycle operations and cross-domain transactions;
+- completing Python/native convergence for cross-domain transactions;
 - migrating Voodoo Framework compatibility adapters onto the native messaging/object/query surfaces;
 - richer Collection migration/composite-index/query-planner support and physical ordered range seeks;
 - live-query/watch convenience APIs above the durable change feed;
