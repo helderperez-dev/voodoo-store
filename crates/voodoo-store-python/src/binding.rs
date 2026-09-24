@@ -10,3 +10,4 @@ mod outbox;
 mod rpc;
 mod schedule;
 mod transaction_domains;
+mod workflow;
