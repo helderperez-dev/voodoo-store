@@ -95,6 +95,34 @@ impl Store {
         Ok(true)
     }
 
+    pub fn list_object_refs(
+        &self,
+        namespace: impl AsRef<[u8]>,
+        name_prefix: impl AsRef<[u8]>,
+    ) -> Result<Vec<(Vec<u8>, ObjectId)>, ObjectError> {
+        let namespace = namespace.as_ref();
+        let name_prefix = name_prefix.as_ref();
+        if namespace.is_empty() {
+            return Err(ObjectError::EmptyReferenceName);
+        }
+
+        let scan_prefix = reference_namespace_prefix(namespace)?;
+        let mut refs = Vec::new();
+        for (key, value) in self.scan_prefix(&scan_prefix) {
+            let name = decode_reference_name(&key, namespace)?;
+            if !name.starts_with(name_prefix) {
+                continue;
+            }
+            let id: ObjectId = value
+                .as_slice()
+                .try_into()
+                .map_err(|_| ObjectError::CorruptReference)?;
+            refs.push((name, id));
+        }
+        refs.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+        Ok(refs)
+    }
+
     pub fn gc_orphan_objects(&mut self, limit: usize) -> Result<ObjectGcReport, ObjectError> {
         let mut referenced = std::collections::HashSet::new();
         for (_, value) in self.scan_prefix(REF_PREFIX) {
@@ -162,6 +190,40 @@ fn decode_object_key(key: &[u8]) -> Result<ObjectId, ObjectError> {
     key[OBJECT_PREFIX.len()..]
         .try_into()
         .map_err(|_| ObjectError::CorruptObject)
+}
+
+fn reference_namespace_prefix(namespace: &[u8]) -> Result<Vec<u8>, ObjectError> {
+    if namespace.is_empty() {
+        return Err(ObjectError::EmptyReferenceName);
+    }
+    let namespace_len =
+        u32::try_from(namespace.len()).map_err(|_| ObjectError::ReferenceNameTooLong)?;
+    let mut key = Vec::with_capacity(REF_PREFIX.len() + 4 + namespace.len());
+    key.extend_from_slice(REF_PREFIX);
+    key.extend_from_slice(&namespace_len.to_be_bytes());
+    key.extend_from_slice(namespace);
+    Ok(key)
+}
+
+fn decode_reference_name(key: &[u8], namespace: &[u8]) -> Result<Vec<u8>, ObjectError> {
+    let prefix = reference_namespace_prefix(namespace)?;
+    if !key.starts_with(&prefix) {
+        return Err(ObjectError::CorruptReference);
+    }
+    let rest = &key[prefix.len()..];
+    if rest.len() < 4 {
+        return Err(ObjectError::CorruptReference);
+    }
+    let name_len = usize::try_from(u32::from_be_bytes(
+        rest[..4]
+            .try_into()
+            .map_err(|_| ObjectError::CorruptReference)?,
+    ))
+    .map_err(|_| ObjectError::CorruptReference)?;
+    if rest.len() != 4 + name_len {
+        return Err(ObjectError::CorruptReference);
+    }
+    Ok(rest[4..].to_vec())
 }
 
 fn reference_key(namespace: &[u8], name: &[u8]) -> Result<Vec<u8>, ObjectError> {
