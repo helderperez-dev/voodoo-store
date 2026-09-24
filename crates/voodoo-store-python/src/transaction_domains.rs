@@ -70,12 +70,7 @@ impl PyTransaction {
         })
     }
 
-    fn emit_event(
-        &mut self,
-        topic: &[u8],
-        payload: &[u8],
-        created_at_ms: i64,
-    ) -> PyResult<usize> {
+    fn emit_event(&mut self, topic: &[u8], payload: &[u8], created_at_ms: i64) -> PyResult<usize> {
         self.stage_operation(PendingOperation::EmitEvent {
             topic: topic.to_vec(),
             payload: payload.to_vec(),
