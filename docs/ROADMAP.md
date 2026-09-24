@@ -2,7 +2,7 @@
 
 The roadmap is intentionally bottom-up. Features that depend on durability, ordering, or transactions do not advance until the layer below has crash/fault coverage.
 
-## Current release target — v0.1 usable single-node application-state engine
+## Current position — Python v0.2.2 published; 0.3 Native Surface Convergence next
 
 Voodoo Store is already beyond a KV/queue prototype. The current single-node engine persists structured data, background work, scheduling, messaging, objects and workflow state in one `.vstore` without requiring external infrastructure.
 
@@ -46,7 +46,7 @@ Implemented today:
 - [x] executable application-state example and adoption quickstart
 - [x] language binding contract defining ownership, bytes-first semantics and framework boundaries
 
-The next integration milestone is intentionally **Python binding + Voodoo adapter**. Core work continues only where it protects format stability, durability, or the API surface that the binding will expose.
+The Python binding is published at **v0.2.2** and Voodoo Framework 3.0 already consumes it as the default durable substrate. The next milestone is **0.3 Native Surface Convergence**: expose existing Rust-core primitives directly through the binding and remove Framework compatibility implementations that currently fall back to generic KV.
 
 ## M0 — Durable log and recovery
 
@@ -256,7 +256,34 @@ Required before starting the Python/Voodoo implementation:
 - [x] final core CI gate after the codec cleanup
 - [x] write the binding-surface contract / ownership rules
 
-**This gate is now closed. The next feature milestone is the Python package, followed by the Voodoo Framework adapter. They are intentionally not implemented in the Rust-core milestone.**
+**This gate is closed. The Python package is published and the Voodoo Framework adapter is live. New work should now converge the binding on already-implemented Rust semantics rather than expanding the core opportunistically.**
+
+## M7.25 — Python/native surface convergence (0.3)
+
+Goal: make the published Python/Voodoo surface reflect the capabilities that already exist in the Rust core.
+
+This milestone is intentionally about **convergence, not new storage semantics**.
+
+- [x] Python KV and transaction baseline
+- [x] Python Collections CRUD and exact secondary-index lookup
+- [x] Python Jobs, Scheduler/Cron and Triggers
+- [ ] Python native range-query surface
+- [ ] Python native Streams / Topics / durable subscription cursors
+- [ ] Python native Objects / references / orphan GC
+- [ ] Python Consumer Groups
+- [ ] Python Outbox
+- [ ] Python RPC
+- [ ] Python CDC/change-feed inspection
+- [ ] Python operational health/storage/checkpoint/compaction/restore surfaces
+- [ ] Python cross-domain transaction surface matching the Rust transaction model
+- [ ] Voodoo Events adapter migrated from KV compatibility storage to native messaging
+- [ ] Voodoo ObjectStore adapter migrated from KV compatibility storage to native Objects
+- [ ] Voodoo Model query path uses native indexes/range queries where declared
+- [ ] end-to-end crash/rollback acceptance proving heterogeneous operations share one commit boundary
+
+The 0.3 gate closes when application code can reach the Store's differentiating primitives without bypassing Runtime ownership or depending on internal KV encodings.
+
+---
 
 ## M7.5 — Voodoo Store Studio
 
@@ -318,8 +345,9 @@ Goal: connect correct local stores safely.
 - [x] standalone CLI
 - [x] language-binding ownership/bytes/error contract
 - [ ] complete C ABI coverage for Queue / Collections / Jobs / Streams / Objects / Workflows
-- [ ] Python binding package — **next integration milestone**
-- [ ] Voodoo Framework adapter — **immediately after Python binding**
+- [x] Python binding package — **v0.2.2 published**
+- [x] Voodoo Framework Store adapter — **default substrate in Voodoo 3.0**
+- [ ] Python/native surface convergence — **0.3 milestone**
 - [ ] Node.js binding package
 - [ ] Go binding
 - [ ] Swift binding

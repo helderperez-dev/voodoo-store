@@ -1,6 +1,6 @@
 # Voodoo Store Language Binding Contract
 
-Status: pre-binding contract for the v0.1 single-node core.
+Status: living binding contract. Python binding v0.2.2 is published; 0.3 is converging the Python surface on the existing Rust-core primitives.
 
 This document defines the boundary between `voodoo-store-core` and language-specific bindings. It exists so Python, Node.js, Go, Swift, Java/.NET, and the Voodoo Framework can integrate without leaking host-runtime assumptions into the storage engine.
 
@@ -255,7 +255,7 @@ Rules:
 
 ## Python binding target
 
-The first Python package should be thin and Rust-backed, preferably using PyO3/maturin unless a later decision changes the packaging strategy.
+The Python package is thin and Rust-backed using PyO3/maturin. The binding must continue expanding by exposing core-owned semantics rather than reproducing them in Python.
 
 Suggested public shape:
 

@@ -105,3 +105,50 @@ def test_transaction_rollback_discards_native_record(tmp_path):
     assert store.get(b"data:lead:meta:next_id") is None
     assert store.get_record(b"lead", b"1") is None
     store.close()
+
+
+def test_native_collection_range_query(tmp_path):
+    store = Store.open(tmp_path / "range-query.vstore")
+    store.create_collection(b"product", codec=b"json")
+    store.define_index(b"product", b"price")
+
+    for primary_key, price in [
+        (b"a", b"010"),
+        (b"b", b"020"),
+        (b"c", b"020"),
+        (b"d", b"030"),
+        (b"e", b"040"),
+    ]:
+        store.upsert_record(
+            b"product",
+            primary_key,
+            primary_key,
+            indexes=[(b"price", price)],
+        )
+
+    rows = store.query_index_range(
+        b"product",
+        b"price",
+        start=b"020",
+        end=b"040",
+        end_inclusive=False,
+    )
+    assert [(index_value, record[0]) for index_value, record in rows] == [
+        (b"020", b"b"),
+        (b"020", b"c"),
+        (b"030", b"d"),
+    ]
+
+    descending = store.query_index_range(
+        b"product",
+        b"price",
+        start=b"010",
+        end=b"040",
+        descending=True,
+        limit=2,
+    )
+    assert [(index_value, record[0]) for index_value, record in descending] == [
+        (b"040", b"e"),
+        (b"030", b"d"),
+    ]
+    store.close()

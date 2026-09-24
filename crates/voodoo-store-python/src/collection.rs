@@ -1,7 +1,8 @@
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use voodoo_store_core::{
-    CollectionDefinition, CollectionError, CollectionRecord, IndexDefinition, IndexValue,
+    CollectionDefinition, CollectionError, CollectionRecord, IndexDefinition, IndexRangeQuery,
+    IndexValue, QueryBound, QueryError, QueryOrder,
 };
 
 use super::{
@@ -9,8 +10,13 @@ use super::{
 };
 
 type PyRecord = (Py<PyBytes>, Py<PyBytes>, Vec<(Py<PyBytes>, Py<PyBytes>)>);
+type PyIndexedRecord = (Py<PyBytes>, PyRecord);
 
 fn map_collection_error(error: CollectionError) -> PyErr {
+    VoodooStoreError::new_err(error.to_string())
+}
+
+fn map_query_error(error: QueryError) -> PyErr {
     VoodooStoreError::new_err(error.to_string())
 }
 
@@ -161,6 +167,69 @@ impl PyStore {
                         .collect()
                 })
                 .map_err(map_collection_error)
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        collection,
+        index,
+        *,
+        start = None,
+        end = None,
+        start_inclusive = true,
+        end_inclusive = true,
+        descending = false,
+        limit = None
+    ))]
+    fn query_index_range(
+        &self,
+        py: Python<'_>,
+        collection: &[u8],
+        index: &[u8],
+        start: Option<Vec<u8>>,
+        end: Option<Vec<u8>>,
+        start_inclusive: bool,
+        end_inclusive: bool,
+        descending: bool,
+        limit: Option<usize>,
+    ) -> PyResult<Vec<PyIndexedRecord>> {
+        let start = match start {
+            Some(value) if start_inclusive => QueryBound::Included(value),
+            Some(value) => QueryBound::Excluded(value),
+            None => QueryBound::Unbounded,
+        };
+        let end = match end {
+            Some(value) if end_inclusive => QueryBound::Included(value),
+            Some(value) => QueryBound::Excluded(value),
+            None => QueryBound::Unbounded,
+        };
+        let query = IndexRangeQuery {
+            start,
+            end,
+            order: if descending {
+                QueryOrder::Descending
+            } else {
+                QueryOrder::Ascending
+            },
+            limit,
+        };
+
+        with_store(&self.slot, |store| {
+            store
+                .query_index_range(collection, index, &query)
+                .map(|records| {
+                    records
+                        .into_iter()
+                        .map(|indexed| {
+                            (
+                                PyBytes::new(py, &indexed.index_value).unbind(),
+                                py_record(py, indexed.record),
+                            )
+                        })
+                        .collect()
+                })
+                .map_err(map_query_error)
         })
     }
 }
