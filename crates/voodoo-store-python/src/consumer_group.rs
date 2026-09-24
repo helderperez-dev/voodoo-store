@@ -90,12 +90,7 @@ impl PyStore {
         })
     }
 
-    fn consumer_group_reset(
-        &self,
-        stream: &[u8],
-        group: &[u8],
-        next_offset: u64,
-    ) -> PyResult<()> {
+    fn consumer_group_reset(&self, stream: &[u8], group: &[u8], next_offset: u64) -> PyResult<()> {
         with_store_mut(&self.slot, |store| {
             store
                 .consumer_group_reset(stream, group, next_offset)
