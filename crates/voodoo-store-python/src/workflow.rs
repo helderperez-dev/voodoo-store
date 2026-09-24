@@ -122,13 +122,7 @@ impl PyStore {
         })
     }
 
-    fn set_workflow_step(
-        &self,
-        id: &[u8],
-        step: &[u8],
-        state: &[u8],
-        now_ms: i64,
-    ) -> PyResult<()> {
+    fn set_workflow_step(&self, id: &[u8], step: &[u8], state: &[u8], now_ms: i64) -> PyResult<()> {
         let id = parse_id(id)?;
         with_store_mut(&self.slot, |store| {
             store
@@ -140,7 +134,9 @@ impl PyStore {
     fn wait_for_signal(&self, id: &[u8], signal: &[u8], now_ms: i64) -> PyResult<()> {
         let id = parse_id(id)?;
         with_store_mut(&self.slot, |store| {
-            store.wait_for_signal(&id, signal, now_ms).map_err(map_error)
+            store
+                .wait_for_signal(&id, signal, now_ms)
+                .map_err(map_error)
         })
     }
 
@@ -159,12 +155,7 @@ impl PyStore {
         })
     }
 
-    fn wait_until(
-        &self,
-        id: &[u8],
-        resume_at_ms: i64,
-        now_ms: i64,
-    ) -> PyResult<()> {
+    fn wait_until(&self, id: &[u8], resume_at_ms: i64, now_ms: i64) -> PyResult<()> {
         let id = parse_id(id)?;
         with_store_mut(&self.slot, |store| {
             store
@@ -216,11 +207,7 @@ impl PyStore {
         })
     }
 
-    fn workflow_history(
-        &self,
-        py: Python<'_>,
-        id: &[u8],
-    ) -> PyResult<Vec<Py<PyDict>>> {
+    fn workflow_history(&self, py: Python<'_>, id: &[u8]) -> PyResult<Vec<Py<PyDict>>> {
         let id = parse_id(id)?;
         with_store(&self.slot, |store| {
             store
@@ -232,11 +219,7 @@ impl PyStore {
         })
     }
 
-    fn workflow_children(
-        &self,
-        py: Python<'_>,
-        parent_id: &[u8],
-    ) -> PyResult<Vec<Py<PyDict>>> {
+    fn workflow_children(&self, py: Python<'_>, parent_id: &[u8]) -> PyResult<Vec<Py<PyDict>>> {
         let parent_id = parse_id(parent_id)?;
         with_store(&self.slot, |store| {
             store
