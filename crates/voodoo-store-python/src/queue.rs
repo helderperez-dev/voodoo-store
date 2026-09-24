@@ -61,12 +61,7 @@ impl PyStore {
         })
     }
 
-    fn ack_queue(
-        &self,
-        name: &[u8],
-        id: u64,
-        lease_generation: u32,
-    ) -> PyResult<()> {
+    fn ack_queue(&self, name: &[u8], id: u64, lease_generation: u32) -> PyResult<()> {
         with_store_mut(&self.slot, |store| {
             let mut queue = store.queue(name).map_err(map_error)?;
             queue.ack(id, lease_generation).map_err(map_error)
@@ -88,17 +83,10 @@ impl PyStore {
         })
     }
 
-    fn dead_letter_queue(
-        &self,
-        name: &[u8],
-        id: u64,
-        lease_generation: u32,
-    ) -> PyResult<()> {
+    fn dead_letter_queue(&self, name: &[u8], id: u64, lease_generation: u32) -> PyResult<()> {
         with_store_mut(&self.slot, |store| {
             let mut queue = store.queue(name).map_err(map_error)?;
-            queue
-                .dead_letter(id, lease_generation)
-                .map_err(map_error)
+            queue.dead_letter(id, lease_generation).map_err(map_error)
         })
     }
 
