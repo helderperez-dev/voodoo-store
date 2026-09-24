@@ -12,9 +12,9 @@ It is being built for the Voodoo ecosystem, but the core is not coupled to Voodo
 
 ## Status
 
-**v0.1 usable single-node development release.**
+**Current published Python binding: v0.2.2. Core and bindings remain pre-1.0.**
 
-Voodoo Store is pre-1.0, but it is now suitable for controlled single-node development and production experiments where its current compatibility and operational limits are understood.
+Voodoo Store is pre-1.0, but the Rust core and the published Python binding are already suitable for controlled single-node development and production experiments where the current compatibility and operational limits are understood. The next integration line is **0.3 Native Surface Convergence**: exposing more of the existing Rust primitives directly to Python and Voodoo rather than reimplementing them over KV.
 
 The current engine includes:
 
@@ -94,7 +94,8 @@ Applications / Frameworks
         +-- Voodoo Runtime / Framework
         +-- Rust
         +-- C / native bindings
-        +-- future Python / Node / Go / Swift bindings
+        +-- Python binding
+        +-- future Node / Go / Swift bindings
         |
 Stable APIs / bindings
         |
@@ -167,7 +168,7 @@ Only an incomplete physical tail is automatically repairable. Corruption inside 
 
 ## Current good-fit workloads
 
-v0.1 is a reasonable target for controlled use in:
+The current pre-1.0 line is a reasonable target for controlled use in:
 
 - Voodoo Runtime development;
 - SaaS/internal-tool prototypes and early deployments;
@@ -183,13 +184,13 @@ Pin the exact Store version and keep backups for important pre-1.0 stores.
 The main remaining work before a 1.0 claim includes:
 
 - continuous fuzzing and long-running durability soak tests;
-- identity-preserving checkpoints/log generations and atomic in-place compaction;
-- richer Collection query/range/composite-index support;
-- CDC, change feeds and live-query/watch APIs;
-- complete cross-domain transaction coverage for all Store primitives;
+- filesystem/power-loss proof for generation activation and stronger repair tooling;
+- Python/native surface convergence for messaging, objects, CDC, operations and cross-domain transactions;
+- richer Collection migration/composite-index/query-planner support and physical ordered range seeks;
+- live-query/watch convenience APIs above the durable change feed;
 - quotas, richer metrics and tracing;
 - streaming object I/O and lifecycle policies;
-- complete C ABI coverage and first-class language bindings;
+- complete C ABI coverage and additional first-class language bindings;
 - encryption-at-rest/key-rotation design;
 - later replication/sync and Voodoo Protocol integration.
 
@@ -240,7 +241,7 @@ docs/
 
 ## Voodoo integration
 
-Voodoo Framework/Runtime will consume Store behind higher-level primitives while the engine stays independently usable.
+Voodoo Framework/Runtime already consumes the published Python binding behind higher-level primitives while the engine stays independently usable. The 0.3 convergence work removes remaining compatibility implementations where the Rust core already has a native primitive.
 
 ```text
 Voodoo Model       -> Store Collections / data
