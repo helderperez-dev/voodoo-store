@@ -126,7 +126,9 @@ impl PyStore {
         limit: usize,
     ) -> PyResult<Py<PyDict>> {
         with_store_mut(&self.slot, |store| {
-            let report = store.expire_rpc_requests(now_ms, limit).map_err(map_error)?;
+            let report = store
+                .expire_rpc_requests(now_ms, limit)
+                .map_err(map_error)?;
             let result = PyDict::new(py);
             result.set_item("scanned", report.scanned)?;
             result.set_item("expired", report.expired)?;
