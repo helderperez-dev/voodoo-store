@@ -30,6 +30,10 @@ def test_heterogeneous_operations_share_one_commit(tmp_path):
         assert jobs[0]["payload"] == b"order:42"
         assert jobs[0]["idempotency_key"] == b"receipt:42"
 
+        changes = store.changes_after(None, 100)
+        assert changes
+        assert len({change["tx_id"] for change in changes}) == 1
+
         queued = store.claim_queue(b"receipts", 1_000, 100)
         assert queued is not None
         assert queued["payload"] == b"order:42"
@@ -42,10 +46,6 @@ def test_heterogeneous_operations_share_one_commit(tmp_path):
         assert len(outbox) == 1
         assert outbox[0]["topic"] == b"order.paid"
         assert outbox[0]["payload"] == b"order:42"
-
-        changes = store.changes_after(None, 100)
-        assert changes
-        assert len({change["tx_id"] for change in changes}) == 1
 
 
 def test_heterogeneous_transaction_rollback_hides_every_domain(tmp_path):
