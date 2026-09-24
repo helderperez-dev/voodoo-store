@@ -60,12 +60,7 @@ impl PyTransaction {
         Ok(())
     }
 
-    fn emit_event(
-        &mut self,
-        topic: &[u8],
-        payload: &[u8],
-        created_at_ms: i64,
-    ) -> PyResult<()> {
+    fn emit_event(&mut self, topic: &[u8], payload: &[u8], created_at_ms: i64) -> PyResult<()> {
         self.ensure_open()?;
         self.operations.push(PendingOperation::EmitEvent {
             topic: topic.to_vec(),
