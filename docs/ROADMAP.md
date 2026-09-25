@@ -278,12 +278,14 @@ This milestone is intentionally about **convergence, not new storage semantics**
 - [x] Python operational health/storage/checkpoint/compaction/restore surfaces
 - [x] Python native Workflow/HITL state, signals, timers, history and parent/child inspection
 - [x] Python cross-domain transaction surface spanning KV, Collections, Jobs, Queues, Streams/Topics, Objects, Outbox, RPC and Workflows
-- [ ] Voodoo Events adapter migrated from KV compatibility storage to native messaging
-- [ ] Voodoo ObjectStore adapter migrated from KV compatibility storage to native Objects
-- [ ] Voodoo Model query path uses native indexes/range queries where declared
+- [x] Voodoo Events adapter migrated from KV compatibility storage to native messaging
+- [x] Voodoo ObjectStore adapter migrated from KV compatibility storage to native Objects
+- [x] Voodoo Model query path uses native indexes/range queries where declared
 - [x] end-to-end crash/rollback acceptance proving heterogeneous operations share one commit boundary
 
 The 0.3 gate closes when application code can reach the Store's differentiating primitives without bypassing Runtime ownership or depending on internal KV encodings.
+
+**This gate is closed. The Voodoo Framework adapters consume the native messaging, Objects and index/range-query surfaces, proven by Framework CI green against the published 0.3.0 wheel (voodoo PR #77). Application code reaches the differentiating primitives through Runtime-owned adapters without depending on internal KV encodings.**
 
 ---
 
