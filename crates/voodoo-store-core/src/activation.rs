@@ -240,6 +240,7 @@ fn sync_parent_directory(path: &Path) -> Result<(), io::Error> {
         let parent = path.parent().unwrap_or_else(|| Path::new("."));
         OpenOptions::new()
             .read(true)
+            .write(true)
             .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
             .open(parent)?
             .sync_all()
