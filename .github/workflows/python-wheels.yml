@@ -175,7 +175,7 @@ jobs:
           fi
           # Store has no Python runtime dependencies; audit the project
           # metadata instead of the transient pytest/build toolchain.
-          python -m pip_audit --project . --progress-spinner off
+          python -m pip_audit . --progress-spinner off
           python -m pytest -q python/tests
       - name: Verify package version
         env:
