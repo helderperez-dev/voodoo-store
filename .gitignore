@@ -1,7 +1,9 @@
 /target
+/fuzz/target
 **/*.rs.bk
 .DS_Store
 .idea/
 .vscode/
 *.vstore
+!tests/fixtures/*.vstore
 *.vds

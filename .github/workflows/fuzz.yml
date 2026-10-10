@@ -1,0 +1,26 @@
+name: Store fuzzing
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "41 4 * * 6"
+
+jobs:
+  decoder:
+    name: decoder and recovery fuzz smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: Run bounded fuzz campaign
+        run: cargo fuzz run --manifest-path fuzz/Cargo.toml verify_store_bytes --sanitizer none -- -max_total_time=60 -timeout=10
+      - name: Upload minimized crashes
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: store-fuzz-artifacts
+          path: fuzz/artifacts/
+          if-no-files-found: ignore

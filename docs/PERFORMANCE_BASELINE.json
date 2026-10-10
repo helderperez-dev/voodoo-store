@@ -1,0 +1,7 @@
+{
+  "benchmark": "scripts/benchmark_store.py",
+  "iterations": 1000,
+  "max_elapsed_ms": 30000,
+  "verification": "reopen-and-read-last-record",
+  "policy": "A scheduled or release run must remain under the budget; retain its JSON output as a CI artifact."
+}

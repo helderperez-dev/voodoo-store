@@ -2,7 +2,7 @@
 
 The roadmap is intentionally bottom-up. Features that depend on durability, ordering, or transactions do not advance until the layer below has crash/fault coverage.
 
-## Current position — Python v0.2.2 published; 0.3 Native Surface Convergence active
+## Current position — Python v0.3.0 native surface convergence
 
 Voodoo Store is already beyond a KV/queue prototype. The current single-node engine persists structured data, background work, scheduling, messaging, objects and workflow state in one `.vstore` without requiring external infrastructure.
 
@@ -46,7 +46,7 @@ Implemented today:
 - [x] executable application-state example and adoption quickstart
 - [x] language binding contract defining ownership, bytes-first semantics and framework boundaries
 
-The Python binding is published at **v0.2.2** and Voodoo Framework 3.0 already consumes it as the default durable substrate. The next milestone is **0.3 Native Surface Convergence**: expose existing Rust-core primitives directly through the binding and remove Framework compatibility implementations that currently fall back to generic KV.
+The Python binding is on **v0.3.0** and Voodoo Framework 3.2 consumes it as the default durable substrate. Native Store primitives are exposed directly through the binding; the next milestone is operational certification and cross-version recovery evidence.
 
 ## M0 — Durable log and recovery
 
@@ -65,8 +65,8 @@ Goal: establish the byte-level source of truth.
 - [x] deterministic transactional state-model stress test
 - [x] MSRV 1.85 CI
 - [x] Linux/macOS/Windows CI
-- [ ] continuous fuzzing of decoder/recovery scanner
-- [ ] long-running durability soak tests
+- [x] continuous fuzzing scaffold and scheduled decoder/recovery smoke campaign
+- [x] deterministic durability soak test (5,000 commits × 5 reopen/verify cycles)
 
 ## M1 — Embedded KV and storage lifecycle
 
@@ -89,10 +89,10 @@ Goal: make the durable core efficient and operationally safe.
 - [x] high-water marker preventing transaction/sequence reuse after generation activation
 - [x] offline generation activation with stale-generation detection
 - [x] recovery helper for interrupted two-rename activation
-- [ ] directory-fsync/power-loss proof for generation activation on every supported filesystem
+- [ ] directory-fsync/power-loss proof for generation activation on every supported filesystem (directory-entry flushing is now implemented after each rename on Unix and Windows; hosted filesystem-specific power-loss certification remains.)
 - [ ] repair tooling beyond torn-tail and generation-activation recovery
-- [ ] quotas / per-namespace limits
-- [ ] benchmark harness and performance budgets
+- [x] quotas / per-namespace limits (`namespace_max_bytes` is enforced at the transaction boundary, reported through health/Python/CLI surfaces, and covered by quota regression tests.)
+- [x] benchmark harness and retained performance budget metadata (`scripts/benchmark_store.py`, scheduled CI artifact)
 
 ## M2 — Collections, schema, indexes and query
 
@@ -111,7 +111,11 @@ Goal: structured application data without making SQL the internal architecture.
 - [x] deterministic ascending/descending ordering and limits
 - [x] transactional record/index mutation surface
 - [x] committed change-set metadata / CDC integration
-- [ ] migration/evolution tooling beyond version compare-and-swap
+- [ ] migration/evolution tooling beyond version compare-and-swap (collection
+  migrations now record an atomic, durable from/to-version and codec history;
+  the Python binding ships bounded-batch, resumable value transformation
+  helpers; the machine-readable contract now declares forward-only rollback via
+  verified restore or an operator-supplied reverse migration.)
 - [ ] physical ordered-index range seek (current baseline decodes/sorts logical index entries)
 - [ ] composite-index encoding helpers
 - [ ] query expressions and projections
@@ -152,7 +156,7 @@ Jobs and time:
 - [x] cross-domain transaction operations for Queue / Stream / Topic / Objects
 - [x] trigger firing fully transactional with trigger metadata update
 - [x] central Jobs-owned v1 wire codec/staging path used by transactional enqueue
-- [ ] richer retry policies and jitter
+- [x] richer retry policies and jitter (durable Jobs apply deterministic bounded 90–110% retry jitter with overflow checks and regression coverage.)
 - [ ] timezone-aware cron as an optional layer (core remains deterministic UTC)
 
 ## M4 — Messaging, streams and reactive feeds
@@ -189,9 +193,11 @@ Goal: embedded object/blob storage with transaction-aware references.
 - [x] object references
 - [x] orphan detection / garbage collection
 - [x] object creation/reference primitives in cross-domain transactions
-- [ ] streaming writes/reads (current engine materializes values in memory)
-- [ ] richer object metadata
-- [ ] retention/lifecycle policies
+- [ ] streaming writes/reads (the Python binding now exposes bounded native
+  `get_object_chunk` reads and `iter_object_chunks`; true streaming writes and
+  zero-copy/on-disk object reads remain blocked on an engine storage redesign)
+- [x] richer object metadata (content-addressed objects retain bounded deterministic UTF-8 metadata records without changing object identity; metadata survives reopen and is exposed through the Python binding.)
+- [x] retention/lifecycle policies (explicit `expires_at_unix` metadata and bounded purge remove only expired unreferenced objects, reporting retained references.)
 
 ## M6 — Durable workflow state
 
@@ -227,12 +233,16 @@ Goal: make Store safe to operate as embedded infrastructure.
 - [x] deterministic state-model stress coverage
 - [ ] encryption-at-rest design and key rotation metadata
 - [ ] namespace capability metadata
-- [ ] transaction/read/write counters and latency metrics
-- [ ] fsync latency metrics
-- [ ] oldest-work / consumer-lag metrics
-- [ ] compaction backlog metrics
+- [x] transaction/read/write counters and commit latency metrics
+- [x] fsync latency metrics at the commit durability boundary
+- [x] commit-error metrics exposed through Rust health, Python binding, and CLI
+- [x] oldest-work / consumer-lag metrics (queue stats expose optional `ready_lag_ms`; health reports now expose aggregate queue depth and the oldest ready timestamp; dashboards remain a framework concern)
+- [x] conservative compaction backlog estimate in health reports
+- [x] writer lock-contention counter in health reports
+- [x] object read and byte counters in health reports
+- [x] disposable disaster-recovery game-day drill with corruption, restore, reopen, and compaction evidence
 - [ ] tracing hooks
-- [ ] quotas
+- [x] file and per-derived-namespace quotas with typed capacity failures
 
 ## Pre-Python integration gate
 
@@ -300,7 +310,7 @@ Planned command surface:
 - [ ] `voodoo-store studio app.vstore`
 - [ ] `voodoo store studio` with automatic project-store discovery
 - [ ] configurable local port and `--no-open`
-- [ ] read-only mode
+- [x] read-only mode (`voodoo-store inspect` aliases the health report without mutation)
 - [ ] explicit capability gate for destructive mutations
 
 Planned surfaces:
@@ -346,17 +356,18 @@ Goal: connect correct local stores safely.
 - [x] Rust API
 - [x] C ABI v2 foundation
 - [x] C ABI transactions and `last_error`
+- [x] committed C header/consumer smoke compiled in CI and release preflight
 - [x] standalone CLI
 - [x] language-binding ownership/bytes/error contract
 - [ ] complete C ABI coverage for Queue / Collections / Jobs / Streams / Objects / Workflows
-- [x] Python binding package — **v0.2.2 published**
+- [x] Python binding package — **v0.3.0 published**
 - [x] Voodoo Framework Store adapter — **default substrate in Voodoo 3.0**
-- [ ] Python/native surface convergence — **0.3 milestone**
+- [x] Python/native surface convergence — **0.3 milestone**
 - [ ] Node.js binding package
 - [ ] Go binding
 - [ ] Swift binding
 - [ ] Java/.NET compatibility proof
-- [ ] cross-language compatibility fixtures for the same `.vstore`
+- [x] cross-language compatibility fixtures for the same `.vstore` (the retained 0.2.2 fixture is verified by both Python binding restore tests and the Rust core engine)
 - [ ] Voodoo Store Studio
 - [ ] main `voodoo` CLI integration
 

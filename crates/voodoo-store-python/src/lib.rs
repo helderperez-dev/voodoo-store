@@ -16,10 +16,12 @@ create_exception!(_native, ReservedKeyError, VoodooStoreError);
 create_exception!(_native, TransactionFinishedError, VoodooStoreError);
 create_exception!(_native, CorruptionError, VoodooStoreError);
 create_exception!(_native, IoError, VoodooStoreError);
+create_exception!(_native, DiskFullError, VoodooStoreError);
+create_exception!(_native, NamespaceQuotaError, VoodooStoreError);
 
 #[derive(Debug)]
 enum StoreSlot {
-    Open(Store),
+    Open(Box<Store>),
     InTransaction,
     Closed,
 }
@@ -87,15 +89,31 @@ struct PyStore {
 #[pymethods]
 impl PyStore {
     #[staticmethod]
-    #[pyo3(signature = (path, *, durability = "data", repair_torn_tail = true))]
-    fn open(path: PathBuf, durability: &str, repair_torn_tail: bool) -> PyResult<Self> {
+    #[pyo3(signature = (path, *, durability = "data", repair_torn_tail = true, max_bytes = None, namespace_max_bytes = None))]
+    fn open(
+        path: PathBuf,
+        durability: &str,
+        repair_torn_tail: bool,
+        max_bytes: Option<u64>,
+        namespace_max_bytes: Option<u64>,
+    ) -> PyResult<Self> {
+        if max_bytes == Some(0) {
+            return Err(PyValueError::new_err("max_bytes must be positive"));
+        }
+        if namespace_max_bytes == Some(0) {
+            return Err(PyValueError::new_err(
+                "namespace_max_bytes must be positive",
+            ));
+        }
         let options = StoreOptions {
             durability: parse_durability(durability)?,
             repair_torn_tail,
+            max_bytes,
+            namespace_max_bytes,
         };
         let store = Store::open_with_options(path, options).map_err(map_engine_error)?;
         Ok(Self {
-            slot: Arc::new(Mutex::new(StoreSlot::Open(store))),
+            slot: Arc::new(Mutex::new(StoreSlot::Open(Box::new(store)))),
         })
     }
 
@@ -168,7 +186,7 @@ impl PyStore {
     fn transaction(&self) -> PyResult<PyTransaction> {
         let mut slot = lock_slot(&self.slot)?;
         let store = match std::mem::replace(&mut *slot, StoreSlot::InTransaction) {
-            StoreSlot::Open(store) => store,
+            StoreSlot::Open(store) => *store,
             StoreSlot::InTransaction => {
                 *slot = StoreSlot::InTransaction;
                 return Err(StoreBusyError::new_err("a transaction is already active"));
@@ -211,6 +229,10 @@ enum PendingOperation {
         primary_key: Vec<u8>,
         value: Vec<u8>,
         indexes: Vec<voodoo_store_core::IndexValue>,
+    },
+    DeleteRecord {
+        collection: Vec<u8>,
+        primary_key: Vec<u8>,
     },
     EnqueueJob {
         spec: JobSpec,
@@ -500,6 +522,14 @@ impl PyTransaction {
                             .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
                         None
                     }
+                    PendingOperation::DeleteRecord {
+                        collection,
+                        primary_key,
+                    } => {
+                        tx.delete_record(collection, primary_key)
+                            .map_err(|error| VoodooStoreError::new_err(error.to_string()))?;
+                        None
+                    }
                     PendingOperation::EnqueueJob { spec, now_ms } => {
                         let id = tx
                             .enqueue_job(spec.clone(), *now_ms)
@@ -708,7 +738,7 @@ impl PyTransaction {
         let mut slot = lock_slot(&self.slot)?;
         match &*slot {
             StoreSlot::InTransaction => {
-                *slot = StoreSlot::Open(store);
+                *slot = StoreSlot::Open(Box::new(store));
                 Ok(())
             }
             StoreSlot::Open(_) => Err(PyRuntimeError::new_err(
@@ -726,7 +756,7 @@ impl Drop for PyTransaction {
         if let Some(store) = self.store.take() {
             if let Ok(mut slot) = self.slot.lock() {
                 if matches!(*slot, StoreSlot::InTransaction) {
-                    *slot = StoreSlot::Open(store);
+                    *slot = StoreSlot::Open(Box::new(store));
                 }
             }
         }
@@ -808,7 +838,7 @@ fn with_store<T>(
 ) -> PyResult<T> {
     let guard = lock_slot(slot)?;
     match &*guard {
-        StoreSlot::Open(store) => function(store),
+        StoreSlot::Open(store) => function(store.as_ref()),
         StoreSlot::InTransaction => Err(StoreBusyError::new_err(
             "store is exclusively borrowed by an active transaction",
         )),
@@ -822,7 +852,7 @@ fn with_store_mut<T>(
 ) -> PyResult<T> {
     let mut guard = lock_slot(slot)?;
     match &mut *guard {
-        StoreSlot::Open(store) => function(store),
+        StoreSlot::Open(store) => function(store.as_mut()),
         StoreSlot::InTransaction => Err(StoreBusyError::new_err(
             "store is exclusively borrowed by an active transaction",
         )),
@@ -837,6 +867,10 @@ fn map_engine_error(error: EngineError) -> PyErr {
         EngineError::ReservedKey => ReservedKeyError::new_err(message),
         EngineError::TransactionFinished => TransactionFinishedError::new_err(message),
         EngineError::Io(_) => IoError::new_err(message),
+        EngineError::DiskFull => DiskFullError::new_err(message),
+        EngineError::NamespaceQuotaExceeded { .. } | EngineError::NamespaceQuotaOverflow => {
+            NamespaceQuotaError::new_err(message)
+        }
         EngineError::Header(_)
         | EngineError::Log(_)
         | EngineError::InvalidOperationPayload
@@ -862,6 +896,11 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     )?;
     module.add("CorruptionError", module.py().get_type::<CorruptionError>())?;
     module.add("IoError", module.py().get_type::<IoError>())?;
+    module.add("DiskFullError", module.py().get_type::<DiskFullError>())?;
+    module.add(
+        "NamespaceQuotaError",
+        module.py().get_type::<NamespaceQuotaError>(),
+    )?;
     module.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }

@@ -2,8 +2,9 @@ use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use fs2::FileExt;
 use thiserror::Error;
@@ -14,6 +15,9 @@ use crate::log::{HEADER_LEN, LogRecord, RecordKind, StoreError, encoded_record_l
 pub(crate) const INTERNAL_KEY_PREFIX: &[u8] = b"\xffvds:";
 
 static OPEN_WRITERS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+static LOCK_CONTENTIONS: AtomicU64 = AtomicU64::new(0);
+static OBJECT_READS: AtomicU64 = AtomicU64::new(0);
+static OBJECT_BYTES_READ: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Durability {
@@ -26,6 +30,31 @@ pub enum Durability {
 pub struct StoreOptions {
     pub durability: Durability,
     pub repair_torn_tail: bool,
+    pub max_bytes: Option<u64>,
+    /// Maximum live value bytes allowed in each derived Store namespace.
+    pub namespace_max_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StoreMetrics {
+    pub commits: u64,
+    pub puts: u64,
+    pub deletes: u64,
+    pub records_appended: u64,
+    pub bytes_appended: u64,
+    pub recovery_records: u64,
+    pub commit_latency_total_us: u64,
+    pub commit_latency_max_us: u64,
+    pub fsync_latency_total_us: u64,
+    pub fsync_latency_max_us: u64,
+    /// Number of transactions whose commit path returned an error.
+    pub commit_errors: u64,
+    pub queue_claims: u64,
+    pub queue_acks: u64,
+    pub object_puts: u64,
+    pub object_bytes_written: u64,
+    pub object_gc_runs: u64,
+    pub object_gc_removed: u64,
 }
 
 impl Default for StoreOptions {
@@ -33,6 +62,8 @@ impl Default for StoreOptions {
         Self {
             durability: Durability::Data,
             repair_torn_tail: true,
+            max_bytes: None,
+            namespace_max_bytes: None,
         }
     }
 }
@@ -72,6 +103,7 @@ impl ProcessWriterGuard {
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         if !writers.insert(path.clone()) {
+            LOCK_CONTENTIONS.fetch_add(1, Ordering::Relaxed);
             return Err(EngineError::AlreadyOpen);
         }
         drop(writers);
@@ -97,6 +129,7 @@ pub struct Store {
     state: HashMap<Vec<u8>, Vec<u8>>,
     next_tx_id: u64,
     next_sequence: u64,
+    metrics: StoreMetrics,
     _process_writer: ProcessWriterGuard,
 }
 
@@ -118,7 +151,12 @@ impl Store {
             .open(&path)?;
 
         let process_writer = ProcessWriterGuard::acquire(&path)?;
-        FileExt::try_lock_exclusive(&file).map_err(map_lock_error)?;
+        if let Err(error) = FileExt::try_lock_exclusive(&file) {
+            if is_lock_contention(&error) {
+                LOCK_CONTENTIONS.fetch_add(1, Ordering::Relaxed);
+            }
+            return Err(map_lock_error(error));
+        }
         let header = load_or_initialize_header(&mut file)?;
         let recovery = recover(&mut file)?;
 
@@ -137,6 +175,10 @@ impl Store {
             state: recovery.state,
             next_tx_id: next_counter(recovery.max_tx_id)?,
             next_sequence: next_counter(recovery.max_sequence)?,
+            metrics: StoreMetrics {
+                recovery_records: recovery.records,
+                ..StoreMetrics::default()
+            },
             _process_writer: process_writer,
         })
     }
@@ -172,6 +214,51 @@ impl Store {
 
     pub const fn options(&self) -> StoreOptions {
         self.options
+    }
+
+    pub const fn metrics(&self) -> StoreMetrics {
+        self.metrics
+    }
+
+    pub(crate) fn lock_contentions_total() -> u64 {
+        LOCK_CONTENTIONS.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn object_reads_total() -> u64 {
+        OBJECT_READS.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn object_bytes_read_total() -> u64 {
+        OBJECT_BYTES_READ.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn record_object_read(bytes: usize) {
+        OBJECT_READS.fetch_add(1, Ordering::Relaxed);
+        OBJECT_BYTES_READ.fetch_add(bytes as u64, Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_queue_claim(&mut self) {
+        self.metrics.queue_claims = self.metrics.queue_claims.saturating_add(1);
+    }
+
+    pub(crate) fn record_queue_ack(&mut self) {
+        self.metrics.queue_acks = self.metrics.queue_acks.saturating_add(1);
+    }
+
+    pub(crate) fn record_object_put(&mut self, bytes: usize) {
+        self.metrics.object_puts = self.metrics.object_puts.saturating_add(1);
+        self.metrics.object_bytes_written = self
+            .metrics
+            .object_bytes_written
+            .saturating_add(bytes as u64);
+    }
+
+    pub(crate) fn record_object_gc(&mut self, removed: usize) {
+        self.metrics.object_gc_runs = self.metrics.object_gc_runs.saturating_add(1);
+        self.metrics.object_gc_removed = self
+            .metrics
+            .object_gc_removed
+            .saturating_add(removed as u64);
     }
 
     pub fn get(&self, key: impl AsRef<[u8]>) -> Option<&[u8]> {
@@ -288,8 +375,27 @@ impl Store {
             .checked_add(1)
             .ok_or(EngineError::CounterExhausted)?;
         let bytes = LogRecord::new(kind, tx_id, sequence, payload).encode()?;
+        if let Some(max_bytes) = self.options.max_bytes {
+            let current = self.file.metadata()?.len();
+            let projected = current
+                .checked_add(bytes.len() as u64)
+                .ok_or(EngineError::StorageQuotaExceeded { max_bytes })?;
+            if projected > max_bytes {
+                return Err(EngineError::StorageQuotaExceeded { max_bytes });
+            }
+        }
         self.file.seek(SeekFrom::End(0))?;
-        self.file.write_all(&bytes)?;
+        self.file.write_all(&bytes).map_err(map_io_error)?;
+        self.metrics.records_appended = self.metrics.records_appended.saturating_add(1);
+        self.metrics.bytes_appended = self
+            .metrics
+            .bytes_appended
+            .saturating_add(bytes.len() as u64);
+        match kind {
+            RecordKind::Put => self.metrics.puts = self.metrics.puts.saturating_add(1),
+            RecordKind::Delete => self.metrics.deletes = self.metrics.deletes.saturating_add(1),
+            RecordKind::Commit => self.metrics.commits = self.metrics.commits.saturating_add(1),
+        }
         Ok(())
     }
 }
@@ -391,15 +497,45 @@ impl Transaction<'_> {
     }
 
     pub fn commit(mut self) -> Result<(), EngineError> {
+        let result = self.commit_inner();
+        if result.is_err() {
+            self.store.metrics.commit_errors = self.store.metrics.commit_errors.saturating_add(1);
+        }
+        result
+    }
+
+    fn commit_inner(&mut self) -> Result<(), EngineError> {
         self.ensure_open()?;
+        let started = Instant::now();
         if self.emit_cdc {
             let committed_operations = self.operations.clone();
-            crate::cdc::stage_changes(&mut self, &committed_operations)?;
+            crate::cdc::stage_changes(self, &committed_operations)?;
         }
+        self.store.check_namespace_quota(&self.operations)?;
         self.store
             .append(RecordKind::Commit, self.tx_id, Vec::new())?;
+        let fsync_started = Instant::now();
         sync_file(&self.store.file, self.store.options.durability)?;
+        let fsync_us = fsync_started
+            .elapsed()
+            .as_micros()
+            .min(u128::from(u64::MAX)) as u64;
         apply_operations(&mut self.store.state, &self.operations);
+        let elapsed_us = started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
+        self.store.metrics.commit_latency_total_us = self
+            .store
+            .metrics
+            .commit_latency_total_us
+            .saturating_add(elapsed_us);
+        self.store.metrics.commit_latency_max_us =
+            self.store.metrics.commit_latency_max_us.max(elapsed_us);
+        self.store.metrics.fsync_latency_total_us = self
+            .store
+            .metrics
+            .fsync_latency_total_us
+            .saturating_add(fsync_us);
+        self.store.metrics.fsync_latency_max_us =
+            self.store.metrics.fsync_latency_max_us.max(fsync_us);
         self.finished = true;
         Ok(())
     }
@@ -416,6 +552,54 @@ impl Transaction<'_> {
         } else {
             Ok(())
         }
+    }
+}
+
+impl Store {
+    fn check_namespace_quota(&self, operations: &[Operation]) -> Result<(), EngineError> {
+        let Some(max_bytes) = self.options.namespace_max_bytes else {
+            return Ok(());
+        };
+
+        let mut totals: HashMap<String, u64> = HashMap::new();
+        for (key, value) in &self.state {
+            let namespace = namespace_for_key(key);
+            let total = totals.entry(namespace).or_default();
+            *total = total
+                .checked_add(value.len() as u64)
+                .ok_or(EngineError::NamespaceQuotaOverflow)?;
+        }
+
+        let mut final_values: HashMap<Vec<u8>, Option<Vec<u8>>> = HashMap::new();
+        for operation in operations {
+            match operation {
+                Operation::Put(key, value) => {
+                    final_values.insert(key.clone(), Some(value.clone()));
+                }
+                Operation::Delete(key) => {
+                    final_values.insert(key.clone(), None);
+                }
+            }
+        }
+        for (key, value) in final_values {
+            let namespace = namespace_for_key(&key);
+            let total = totals.entry(namespace.clone()).or_default();
+            if let Some(previous) = self.state.get(&key) {
+                *total = total.saturating_sub(previous.len() as u64);
+            }
+            if let Some(value) = value {
+                *total = total
+                    .checked_add(value.len() as u64)
+                    .ok_or(EngineError::NamespaceQuotaOverflow)?;
+            }
+            if *total > max_bytes {
+                return Err(EngineError::NamespaceQuotaExceeded {
+                    namespace,
+                    max_bytes,
+                });
+            }
+        }
+        Ok(())
     }
 }
 
@@ -525,8 +709,8 @@ fn recover(file: &mut File) -> Result<Recovery, EngineError> {
 
 fn sync_file(file: &File, durability: Durability) -> Result<(), EngineError> {
     match durability {
-        Durability::Strict => file.sync_all()?,
-        Durability::Data => file.sync_data()?,
+        Durability::Strict => file.sync_all().map_err(map_io_error)?,
+        Durability::Data => file.sync_data().map_err(map_io_error)?,
         Durability::Relaxed => {}
     }
     Ok(())
@@ -538,6 +722,16 @@ fn map_lock_error(error: std::io::Error) -> EngineError {
     } else {
         EngineError::Io(error)
     }
+}
+
+fn map_io_error(error: std::io::Error) -> EngineError {
+    if matches!(
+        error.kind(),
+        std::io::ErrorKind::StorageFull | std::io::ErrorKind::QuotaExceeded
+    ) {
+        return EngineError::DiskFull;
+    }
+    EngineError::Io(error)
 }
 
 fn is_lock_contention(error: &std::io::Error) -> bool {
@@ -575,6 +769,14 @@ fn ensure_user_key(key: &[u8]) -> Result<(), EngineError> {
     } else {
         Ok(())
     }
+}
+
+fn namespace_for_key(key: &[u8]) -> String {
+    if let Some(rest) = key.strip_prefix(INTERNAL_KEY_PREFIX) {
+        let segment = rest.split(|byte| *byte == b':').next().unwrap_or(rest);
+        return format!("internal:{}", String::from_utf8_lossy(segment));
+    }
+    "user".to_owned()
 }
 
 fn unix_time_ms() -> Result<i64, EngineError> {
@@ -658,6 +860,14 @@ pub enum EngineError {
     Log(#[from] StoreError),
     #[error("store is already open by another writer")]
     AlreadyOpen,
+    #[error("store storage quota exceeded: maximum {max_bytes} bytes")]
+    StorageQuotaExceeded { max_bytes: u64 },
+    #[error("store cannot accept writes because the filesystem is full or the quota is exhausted")]
+    DiskFull,
+    #[error("store namespace quota exceeded for {namespace}: maximum {max_bytes} value bytes")]
+    NamespaceQuotaExceeded { namespace: String, max_bytes: u64 },
+    #[error("store namespace quota accounting overflow")]
+    NamespaceQuotaOverflow,
     #[error("key is too large")]
     KeyTooLarge,
     #[error("keys beginning with the Voodoo Store internal namespace are reserved")]
@@ -719,10 +929,72 @@ mod tests {
     }
 
     #[test]
+    fn storage_quota_rejects_growth_before_append() {
+        let path = temp_store_path("quota");
+        let initial_bytes;
+        {
+            let store = Store::open(&path).unwrap();
+            initial_bytes = fs::metadata(&path).unwrap().len();
+            assert_eq!(store.options().max_bytes, None);
+        }
+        let mut store = Store::open_with_options(
+            &path,
+            StoreOptions {
+                max_bytes: Some(initial_bytes),
+                ..StoreOptions::default()
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            store.put(b"over-quota", b"value"),
+            Err(EngineError::StorageQuotaExceeded { .. })
+        ));
+        assert_eq!(store.get(b"over-quota"), None);
+        let health = store.health_report().unwrap();
+        assert_eq!(health.max_bytes, Some(initial_bytes));
+        assert!(health.within_limit);
+        drop(store);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn filesystem_full_errors_have_a_stable_failure_class() {
+        let error = std::io::Error::from(std::io::ErrorKind::StorageFull);
+        assert!(matches!(map_io_error(error), EngineError::DiskFull));
+    }
+
+    #[test]
+    fn namespace_quota_rejects_growth_before_commit_visibility() {
+        let path = temp_store_path("namespace-quota");
+        let mut store = Store::open_with_options(
+            &path,
+            StoreOptions {
+                namespace_max_bytes: Some(3),
+                ..StoreOptions::default()
+            },
+        )
+        .unwrap();
+        let mut first = store.begin_without_cdc().unwrap();
+        first.put(b"first", b"abc").unwrap();
+        first.commit().unwrap();
+        let mut second = store.begin_without_cdc().unwrap();
+        second.put(b"second", b"d").unwrap();
+        let error = second.commit().unwrap_err();
+        assert!(matches!(error, EngineError::NamespaceQuotaExceeded { .. }));
+        assert_eq!(store.get(b"second"), None);
+        assert_eq!(store.metrics().commit_errors, 1);
+        assert_eq!(store.options().namespace_max_bytes, Some(3));
+        drop(store);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn second_writer_is_rejected() {
         let path = temp_store_path("lock");
         let first = Store::open(&path).unwrap();
+        let before = first.health_report().unwrap().lock_contentions_total;
         assert!(matches!(Store::open(&path), Err(EngineError::AlreadyOpen)));
+        assert!(first.health_report().unwrap().lock_contentions_total > before);
         drop(first);
         assert!(Store::open(&path).is_ok());
         let _ = fs::remove_file(path);

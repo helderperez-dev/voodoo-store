@@ -43,13 +43,16 @@ pub use atomic::{AtomicError, CasOutcome};
 pub use cdc::{ChangeFeedError, ChangeKind, ChangeRecord};
 pub use checkpoint::{CheckpointError, CheckpointReport};
 pub use collection::{
-    CollectionDefinition, CollectionError, CollectionRecord, IndexDefinition, IndexValue,
+    CollectionDefinition, CollectionError, CollectionMigration, CollectionRecord, IndexDefinition,
+    IndexValue,
 };
 pub use compaction::CompactionReport;
 pub use consumer_group::{ConsumerGroupDelivery, ConsumerGroupError, ConsumerGroupState};
 pub use cron::{CronError, CronExpression};
 pub use cron_scheduler::{CronScheduleId, CronSchedulerError, CronTickReport, DurableCronSchedule};
-pub use engine::{Durability, EngineError, Store, StoreOptions, Transaction, VerificationReport};
+pub use engine::{
+    Durability, EngineError, Store, StoreMetrics, StoreOptions, Transaction, VerificationReport,
+};
 pub use generation::{GenerationError, GenerationReport};
 pub use header::{FORMAT_MAJOR, FORMAT_MINOR, HeaderError, STORE_HEADER_LEN, StoreHeader};
 pub use jobs::{
@@ -61,7 +64,7 @@ pub use messaging::{MessagingError, Stream, StreamEntry, SubscriptionState, Topi
 pub use model::{
     DeliverySemantics, DestinationKind, JobState, MessageEnvelope, ScheduleKind, TraceContext,
 };
-pub use objects::{ObjectError, ObjectGcReport, ObjectId, ObjectInfo};
+pub use objects::{ObjectError, ObjectGcReport, ObjectId, ObjectInfo, ObjectRetentionReport};
 pub use operations::{HealthReport, NamespaceStats, OperationsError, StorageStats};
 pub use outbox::{OutboxError, OutboxEvent, OutboxEventId};
 pub use query::{IndexRangeQuery, IndexedRecord, QueryBound, QueryError, QueryOrder};

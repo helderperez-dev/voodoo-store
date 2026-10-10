@@ -48,3 +48,39 @@ fn decoder_rejects_truncation_at_every_record_boundary() {
         );
     }
 }
+
+#[test]
+fn deterministic_random_mutations_never_bypass_integrity_checks() {
+    let encoded = LogRecord::new(
+        RecordKind::Put,
+        123,
+        456,
+        b"randomized-corruption-campaign".to_vec(),
+    )
+    .encode()
+    .unwrap();
+
+    // A small deterministic fuzz-smoke corpus keeps this gate reproducible in
+    // CI while exercising multi-byte mutations beyond the exhaustive one-bit
+    // matrix above. The decoder must return an error, never panic or accept a
+    // corrupted record.
+    let mut state = 0x9e37_79b9_u32;
+    for case in 0..1_000 {
+        let mut corrupted = encoded.clone();
+        let mutations = (next(&mut state) % 3) + 1;
+        for _ in 0..mutations {
+            let offset = (next(&mut state) as usize) % corrupted.len();
+            let bit = 1u8 << (next(&mut state) % 8);
+            corrupted[offset] ^= bit;
+        }
+        assert!(
+            LogRecord::decode(&corrupted).is_err(),
+            "random mutation case {case} was accepted"
+        );
+    }
+}
+
+fn next(state: &mut u32) -> u32 {
+    *state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+    *state
+}

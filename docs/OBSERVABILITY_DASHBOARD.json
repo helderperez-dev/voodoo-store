@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "title": "Voodoo Store operations",
+  "datasource": "voodoo-prometheus",
+  "endpoint": "/voodoo/metrics/prometheus",
+  "refresh_seconds": 15,
+  "panels": [
+    {"id": "storage-growth", "title": "Storage growth", "unit": "bytes", "queries": ["voodoo_store_health_details_native_health_storage_file_bytes", "voodoo_store_health_details_native_health_storage_live_bytes", "voodoo_store_health_details_native_health_compaction_backlog_bytes"]},
+    {"id": "queue-health", "title": "Queue health", "unit": "count-and-milliseconds", "queries": ["voodoo_store_health_details_native_health_queue_ready", "voodoo_store_health_details_native_health_queue_leased", "voodoo_store_health_details_native_health_queue_dead", "voodoo_store_health_details_native_health_queue_total", "voodoo_store_health_details_native_health_queue_oldest_ready_at_ms", "voodoo_store_health_details_native_health_queue_ready_lag_ms"]},
+    {"id": "durability-latency", "title": "Durability latency", "unit": "count-and-microseconds", "queries": ["voodoo_store_health_details_native_health_metrics_commits", "voodoo_store_health_details_native_health_metrics_commit_errors", "voodoo_store_health_details_native_health_metrics_commit_latency_max_us", "voodoo_store_health_details_native_health_metrics_fsync_latency_max_us"]},
+    {"id": "recovery-and-objects", "title": "Recovery and objects", "unit": "count-and-bytes", "queries": ["voodoo_store_health_details_native_health_metrics_recovery_records", "voodoo_store_health_details_native_health_metrics_object_bytes_written", "voodoo_store_health_details_native_health_lock_contentions_total"]}
+  ],
+  "alerts": [
+    {"id": "queue-dead-letters", "query": "voodoo_store_health_details_native_health_queue_dead", "for_seconds": 60, "condition": "greater-than", "threshold": 0, "severity": "warning"},
+    {"id": "commit-errors", "query": "voodoo_store_health_details_native_health_metrics_commit_errors", "for_seconds": 60, "condition": "greater-than", "threshold": 0, "severity": "critical"},
+    {"id": "compaction-backlog", "query": "voodoo_store_health_details_native_health_compaction_backlog_bytes", "for_seconds": 300, "condition": "greater-than", "threshold": 0, "severity": "warning"}
+  ]
+}

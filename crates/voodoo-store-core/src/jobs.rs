@@ -12,6 +12,29 @@ const HISTORY_PREFIX: &[u8] = b"\xffvds:job:history:";
 const SCHEDULE_PREFIX: &[u8] = b"\xffvds:schedule:data:";
 const VERSION: u8 = 1;
 
+/// Apply deterministic bounded jitter to a durable retry delay.
+///
+/// The job id and attempt number provide a stable spread without depending on
+/// process-local randomness, so a retry schedule remains reproducible after a
+/// crash or restart. The multiplier is bounded to 91–110% of the configured
+/// exponential delay; avoiding the exact lower boundary keeps ``available_at``
+/// strictly later than the minimum backoff at integer millisecond precision.
+fn retry_delay_ms(job: &DurableJob) -> Result<i64, JobError> {
+    let multiplier = u64::from(job.attempts.max(1));
+    let base = job
+        .retry_backoff_ms
+        .checked_mul(multiplier)
+        .ok_or(JobError::TimeOverflow)?;
+    let seed = job
+        .id
+        .iter()
+        .fold(0u8, |acc, byte| acc.wrapping_add(*byte))
+        .wrapping_add(job.attempts as u8);
+    let percent = 91u64 + u64::from(seed % 20);
+    let jittered = base.checked_mul(percent).ok_or(JobError::TimeOverflow)? / 100;
+    i64::try_from(jittered).map_err(|_| JobError::TimeOverflow)
+}
+
 pub type JobId = [u8; 16];
 pub type ScheduleId = [u8; 16];
 
@@ -296,12 +319,7 @@ impl Store {
             job.state = DurableJobState::Dead;
             JobHistoryKind::Dead
         } else {
-            let multiplier = u64::from(job.attempts.max(1));
-            let delay = job
-                .retry_backoff_ms
-                .checked_mul(multiplier)
-                .ok_or(JobError::TimeOverflow)?;
-            let delay = i64::try_from(delay).map_err(|_| JobError::TimeOverflow)?;
+            let delay = retry_delay_ms(&job)?;
             job.available_at_ms = now_ms.checked_add(delay).ok_or(JobError::TimeOverflow)?;
             job.state = DurableJobState::Ready;
             JobHistoryKind::RetryScheduled
@@ -995,6 +1013,29 @@ mod tests {
     }
 
     #[test]
+    fn retry_delay_jitter_stays_within_ten_percent() {
+        for seed in 0u8..=u8::MAX {
+            let job = DurableJob {
+                id: [seed; 16],
+                state: DurableJobState::Leased,
+                handler: Vec::new(),
+                payload: Vec::new(),
+                available_at_ms: 0,
+                deadline_ms: None,
+                priority: 0,
+                attempts: 3,
+                max_attempts: 4,
+                retry_backoff_ms: 1_000,
+                lease_until_ms: 0,
+                lease_generation: 1,
+                idempotency_key: None,
+            };
+            let delay = retry_delay_ms(&job).unwrap();
+            assert!((2_700..=3_300).contains(&delay), "delay={delay}");
+        }
+    }
+
+    #[test]
     fn job_claim_retry_completion_and_history_are_durable() {
         let path = temp_store_path("lifecycle");
         let id;
@@ -1012,8 +1053,8 @@ mod tests {
                     .unwrap(),
                 DurableJobState::Ready
             );
-            assert!(store.claim_job(14, 100).unwrap().is_none());
-            let second = store.claim_job(15, 100).unwrap().unwrap();
+            assert!(store.claim_job(13, 100).unwrap().is_none());
+            let second = store.claim_job(16, 100).unwrap().unwrap();
             store
                 .complete_job(&id, second.lease_generation, 16)
                 .unwrap();

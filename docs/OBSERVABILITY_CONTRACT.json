@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "source": "health_report",
+  "signals": {
+    "storage.file_bytes": "storage.file_bytes",
+    "storage.live_bytes": "storage.live_bytes",
+    "compaction_backlog_bytes": "compaction_backlog_bytes",
+    "lock_contentions_total": "lock_contentions_total",
+    "queue_ready": "queue_ready",
+    "queue_leased": "queue_leased",
+    "queue_dead": "queue_dead",
+    "queue_total": "queue_total",
+    "queue_oldest_ready_at_ms": "queue_oldest_ready_at_ms",
+    "queue_ready_lag_ms": "queue_ready_lag_ms",
+    "metrics.commits": "metrics.commits",
+    "metrics.commit_errors": "metrics.commit_errors",
+    "metrics.commit_latency_max_us": "metrics.commit_latency_max_us",
+    "metrics.fsync_latency_max_us": "metrics.fsync_latency_max_us",
+    "metrics.recovery_records": "metrics.recovery_records",
+    "metrics.object_bytes_written": "metrics.object_bytes_written"
+  },
+  "panels": [
+    {
+      "id": "storage-growth",
+      "signals": ["storage.file_bytes", "storage.live_bytes", "compaction_backlog_bytes"],
+      "unit": "bytes"
+    },
+    {
+      "id": "queue-health",
+      "signals": ["queue_ready", "queue_leased", "queue_dead", "queue_total", "queue_oldest_ready_at_ms", "queue_ready_lag_ms"],
+      "unit": "count-and-unix-ms"
+    },
+    {
+      "id": "durability-latency",
+      "signals": ["metrics.commits", "metrics.commit_errors", "metrics.commit_latency_max_us", "metrics.fsync_latency_max_us"],
+      "unit": "count-and-microseconds"
+    },
+    {
+      "id": "recovery-and-objects",
+      "signals": ["metrics.recovery_records", "metrics.object_bytes_written", "lock_contentions_total"],
+      "unit": "count-and-bytes"
+    }
+  ],
+  "alerts": [
+    {
+      "id": "queue-dead-letters",
+      "signal": "queue_dead",
+      "condition": "greater-than",
+      "threshold": 0,
+      "severity": "warning"
+    },
+    {
+      "id": "commit-errors",
+      "signal": "metrics.commit_errors",
+      "condition": "greater-than",
+      "threshold": 0,
+      "severity": "critical"
+    },
+    {
+      "id": "compaction-backlog",
+      "signal": "compaction_backlog_bytes",
+      "condition": "greater-than",
+      "threshold": 0,
+      "severity": "warning"
+    }
+  ]
+}

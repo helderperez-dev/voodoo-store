@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use voodoo_store_core::Store;
+use voodoo_store_core::{Durability, Store, StoreOptions};
 
 const CHILD_ENV: &str = "VOODOO_STORE_CRASH_CHILD";
 const PATH_ENV: &str = "VOODOO_STORE_CRASH_PATH";
@@ -49,6 +49,18 @@ fn crash_child() {
             let mut store = Store::open(&path).unwrap();
             store.put(b"crash:after", b"must-survive").unwrap();
             std::process::exit(92);
+        }
+        "strict-after-commit" => {
+            let mut store = Store::open_with_options(
+                &path,
+                StoreOptions {
+                    durability: Durability::Strict,
+                    ..StoreOptions::default()
+                },
+            )
+            .unwrap();
+            store.put(b"crash:strict", b"must-survive-strict").unwrap();
+            std::process::exit(93);
         }
         other => panic!("unknown crash mode: {other}"),
     }
@@ -98,6 +110,32 @@ fn process_exit_after_commit_preserves_committed_transaction() {
     let store = Store::open(&path).unwrap();
     assert_eq!(store.get(b"safe"), Some(b"committed".as_slice()));
     assert_eq!(store.get(b"crash:after"), Some(b"must-survive".as_slice()));
+    drop(store);
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn strict_durability_preserves_committed_state_after_process_exit() {
+    if std::env::var_os(CHILD_ENV).is_some() {
+        return;
+    }
+
+    let path = temp_store_path("strict-after-commit");
+    {
+        let mut store = Store::open(&path).unwrap();
+        store.put(b"safe", b"committed").unwrap();
+    }
+
+    let status = run_child(&path, "strict-after-commit");
+    assert_eq!(status.code(), Some(93));
+
+    let store = Store::open(&path).unwrap();
+    assert_eq!(store.get(b"safe"), Some(b"committed".as_slice()));
+    assert_eq!(
+        store.get(b"crash:strict"),
+        Some(b"must-survive-strict".as_slice())
+    );
     drop(store);
 
     let _ = fs::remove_file(path);

@@ -1,10 +1,11 @@
 //! Operational health and storage accounting shared by CLI, Studio, and Runtime.
 
 use std::fs;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use thiserror::Error;
 
-use crate::{EngineError, Store};
+use crate::{EngineError, Store, StoreMetrics, queue};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StorageStats {
@@ -49,6 +50,27 @@ pub struct HealthReport {
     pub format_minor: u16,
     pub storage: StorageStats,
     pub namespaces: Vec<NamespaceStats>,
+    pub max_bytes: Option<u64>,
+    pub namespace_max_bytes: Option<u64>,
+    pub metrics: StoreMetrics,
+    /// Process-wide count of rejected writer-lock attempts.
+    pub lock_contentions_total: u64,
+    pub object_reads_total: u64,
+    pub object_bytes_read_total: u64,
+    /// Bytes currently attributable to log history and framing overhead.
+    /// This is a conservative compaction-backlog estimate; a rewrite can
+    /// reclaim at most this amount without changing visible keys/values.
+    pub compaction_backlog_bytes: u64,
+    /// Aggregate queue depth across all native queues.
+    pub queue_ready: u64,
+    pub queue_leased: u64,
+    pub queue_dead: u64,
+    pub queue_total: u64,
+    /// Oldest ready message timestamp, when at least one ready message exists.
+    pub queue_oldest_ready_at_ms: Option<i64>,
+    /// Bounded current lag for the oldest ready message, when one exists.
+    pub queue_ready_lag_ms: Option<u64>,
+    pub within_limit: bool,
 }
 
 impl Store {
@@ -120,12 +142,40 @@ impl Store {
         })
         .collect::<Result<Vec<_>, OperationsError>>()?;
 
+        let compaction_backlog_bytes = storage.file_bytes.saturating_sub(storage.live_bytes());
+        let queues = queue::aggregate_stats(self)?;
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+            .unwrap_or(0);
+        let queue_ready_lag_ms = queues.oldest_ready_at_ms.map(|timestamp| {
+            let ready_at_ms = u64::try_from(timestamp).unwrap_or(0);
+            now_ms.saturating_sub(ready_at_ms)
+        });
+
         Ok(HealthReport {
             store_id: header.store_id,
             format_major: header.format_major,
             format_minor: header.format_minor,
             storage,
             namespaces,
+            max_bytes: self.options().max_bytes,
+            namespace_max_bytes: self.options().namespace_max_bytes,
+            metrics: self.metrics(),
+            lock_contentions_total: Store::lock_contentions_total(),
+            object_reads_total: Store::object_reads_total(),
+            object_bytes_read_total: Store::object_bytes_read_total(),
+            compaction_backlog_bytes,
+            queue_ready: queues.ready,
+            queue_leased: queues.leased,
+            queue_dead: queues.dead,
+            queue_total: queues.total,
+            queue_oldest_ready_at_ms: queues.oldest_ready_at_ms,
+            queue_ready_lag_ms,
+            within_limit: self
+                .options()
+                .max_bytes
+                .is_none_or(|max| storage.file_bytes <= max),
         })
     }
 }
@@ -134,6 +184,8 @@ impl Store {
 pub enum OperationsError {
     #[error("store error: {0}")]
     Store(#[from] EngineError),
+    #[error("queue health error: {0}")]
+    Queue(#[from] crate::QueueError),
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
     #[error("storage accounting overflow")]
@@ -215,6 +267,18 @@ mod tests {
                 .iter()
                 .any(|entry| entry.name == "consumer_groups")
         );
+        assert!(report.metrics.commits > 0);
+        assert!(report.metrics.puts > 0);
+        assert!(report.metrics.bytes_appended > 0);
+        assert!(report.metrics.commit_latency_total_us >= report.metrics.commit_latency_max_us);
+        assert!(report.metrics.fsync_latency_total_us >= report.metrics.fsync_latency_max_us);
+        assert!(report.compaction_backlog_bytes <= report.storage.file_bytes);
+        assert_eq!(report.queue_total, 1);
+        assert_eq!(report.queue_ready, 1);
+        assert_eq!(report.queue_leased, 0);
+        assert_eq!(report.queue_dead, 0);
+        assert_eq!(report.queue_oldest_ready_at_ms, Some(0));
+        assert!(report.queue_ready_lag_ms.unwrap_or(0) > 0);
         drop(store);
         let _ = fs::remove_file(path);
     }

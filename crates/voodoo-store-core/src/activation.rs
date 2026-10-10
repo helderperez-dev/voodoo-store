@@ -6,9 +6,15 @@
 //! retained after success. `recover_generation_activation` can complete or roll
 //! back the small rename window after an interrupted activation.
 //!
-//! This is crash-recoverable at the file-layout level, but does not yet claim
-//! absolute power-loss atomicity for directory metadata on every filesystem.
+//! Directory entries are explicitly synchronized after each rename. Unix uses
+//! a directory file descriptor; Windows opens the parent directory with
+//! `FILE_FLAG_BACKUP_SEMANTICS` and flushes that handle. This makes the
+//! activation protocol durable at the directory-entry boundary on both
+//! supported platforms; filesystem-specific power-loss certification remains
+//! a hosted operational gate.
 
+#[cfg(unix)]
+use std::fs::File;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -87,8 +93,29 @@ pub fn activate_generation_offline(
     }
 
     fs::rename(active, backup)?;
+    if let Err(error) = sync_parent_directory(active) {
+        let rollback = fs::rename(backup, active);
+        return match rollback {
+            Ok(()) => Err(ActivationError::Io(error)),
+            Err(rollback_error) => Err(ActivationError::RollbackFailed {
+                activation: error.to_string(),
+                rollback: rollback_error.to_string(),
+            }),
+        };
+    }
     if let Err(error) = fs::rename(generation, active) {
         let rollback = fs::rename(backup, active);
+        return match rollback {
+            Ok(()) => Err(ActivationError::Io(error)),
+            Err(rollback_error) => Err(ActivationError::RollbackFailed {
+                activation: error.to_string(),
+                rollback: rollback_error.to_string(),
+            }),
+        };
+    }
+
+    if let Err(error) = sync_parent_directory(active) {
+        let rollback = rollback_activation(active, generation, backup);
         return match rollback {
             Ok(()) => Err(ActivationError::Io(error)),
             Err(rollback_error) => Err(ActivationError::RollbackFailed {
@@ -147,11 +174,13 @@ pub fn recover_generation_activation(
                 return Err(ActivationError::IdentityMismatch);
             }
             fs::rename(generation, active)?;
+            sync_parent_directory(active)?;
             verify_activated(active, backup, generation_report.header.store_id)?;
             Ok(ActivationRecovery::CompletedInterruptedActivation)
         }
         (false, false, true) => {
             fs::rename(backup, active)?;
+            sync_parent_directory(active)?;
             Store::verify(active)?;
             Ok(ActivationRecovery::RestoredBackup)
         }
@@ -184,7 +213,42 @@ fn rollback_activation(active: &Path, generation: &Path, backup: &Path) -> Resul
     }
     fs::rename(active, generation)?;
     fs::rename(backup, active)?;
+    sync_parent_directory(active)?;
     Ok(())
+}
+
+/// Persist directory-entry renames where the host filesystem exposes a
+/// directory file descriptor (Unix). Windows does not support opening a
+/// directory for `sync_all`; its rename/flush guarantees are documented as a
+/// separate platform certification requirement rather than being implied.
+#[cfg(unix)]
+fn sync_parent_directory(path: &Path) -> Result<(), io::Error> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    File::open(parent)?.sync_all()
+}
+
+#[cfg(not(unix))]
+fn sync_parent_directory(path: &Path) -> Result<(), io::Error> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        // Win32 requires this flag to open a directory handle. `File::sync_all`
+        // maps to FlushFileBuffers, persisting the rename metadata represented
+        // by that handle without introducing a platform-specific dependency.
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        let parent = path.parent().unwrap_or_else(|| Path::new("."));
+        OpenOptions::new()
+            .read(true)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(parent)?
+            .sync_all()
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        Ok(())
+    }
 }
 
 fn validate_distinct_paths(

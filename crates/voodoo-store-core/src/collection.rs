@@ -9,6 +9,7 @@ use thiserror::Error;
 use crate::{EngineError, Store, Transaction};
 
 const META_PREFIX: &[u8] = b"\xffvds:col:meta:";
+const MIGRATION_PREFIX: &[u8] = b"\xffvds:col:migration:";
 const RECORD_PREFIX: &[u8] = b"\xffvds:col:record:";
 const INDEX_META_PREFIX: &[u8] = b"\xffvds:col:index-meta:";
 const INDEX_PREFIX: &[u8] = b"\xffvds:col:index:";
@@ -17,6 +18,13 @@ const FORMAT_VERSION: u8 = 1;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CollectionDefinition {
     pub schema_version: u32,
+    pub codec: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CollectionMigration {
+    pub from_version: u32,
+    pub to_version: u32,
     pub codec: Vec<u8>,
 }
 
@@ -93,8 +101,33 @@ impl Store {
             schema_version: next_version,
             codec: codec.as_ref().to_vec(),
         };
-        self.put_internal(key, encode_collection_definition(&next)?)?;
+        let migration = CollectionMigration {
+            from_version: expected_version,
+            to_version: next_version,
+            codec: next.codec.clone(),
+        };
+        let mut tx = self.begin()?;
+        tx.put_internal(key, encode_collection_definition(&next)?)?;
+        tx.put_internal(
+            migration_key(name, expected_version, next_version)?,
+            encode_collection_migration(&migration)?,
+        )?;
+        tx.commit()?;
         Ok(true)
+    }
+
+    pub fn collection_migrations(
+        &self,
+        name: impl AsRef<[u8]>,
+    ) -> Result<Vec<CollectionMigration>, CollectionError> {
+        let prefix = migration_prefix(name.as_ref())?;
+        let mut migrations = self
+            .scan_prefix(&prefix)
+            .into_iter()
+            .map(|(_, value)| decode_collection_migration(&value))
+            .collect::<Result<Vec<_>, _>>()?;
+        migrations.sort_unstable_by_key(|migration| (migration.from_version, migration.to_version));
+        Ok(migrations)
     }
 
     pub fn define_index(
@@ -345,6 +378,21 @@ fn meta_key(name: &[u8]) -> Result<Vec<u8>, CollectionError> {
     component_key(META_PREFIX, &[name])
 }
 
+fn migration_prefix(name: &[u8]) -> Result<Vec<u8>, CollectionError> {
+    component_key(MIGRATION_PREFIX, &[name])
+}
+
+fn migration_key(
+    name: &[u8],
+    from_version: u32,
+    to_version: u32,
+) -> Result<Vec<u8>, CollectionError> {
+    component_key(
+        MIGRATION_PREFIX,
+        &[name, &from_version.to_be_bytes(), &to_version.to_be_bytes()],
+    )
+}
+
 fn record_prefix(collection: &[u8]) -> Result<Vec<u8>, CollectionError> {
     component_key(RECORD_PREFIX, &[collection])
 }
@@ -424,6 +472,37 @@ fn decode_collection_definition(encoded: &[u8]) -> Result<CollectionDefinition, 
     Ok(CollectionDefinition {
         schema_version,
         codec: encoded[9..].to_vec(),
+    })
+}
+
+fn encode_collection_migration(
+    migration: &CollectionMigration,
+) -> Result<Vec<u8>, CollectionError> {
+    let codec_len =
+        u32::try_from(migration.codec.len()).map_err(|_| CollectionError::ComponentTooLarge)?;
+    let mut encoded = Vec::with_capacity(13 + migration.codec.len());
+    encoded.push(FORMAT_VERSION);
+    encoded.extend_from_slice(&migration.from_version.to_le_bytes());
+    encoded.extend_from_slice(&migration.to_version.to_le_bytes());
+    encoded.extend_from_slice(&codec_len.to_le_bytes());
+    encoded.extend_from_slice(&migration.codec);
+    Ok(encoded)
+}
+
+fn decode_collection_migration(encoded: &[u8]) -> Result<CollectionMigration, CollectionError> {
+    if encoded.len() < 13 || encoded[0] != FORMAT_VERSION {
+        return Err(CollectionError::CorruptMetadata);
+    }
+    let from_version = u32::from_le_bytes(encoded[1..5].try_into().expect("from version"));
+    let to_version = u32::from_le_bytes(encoded[5..9].try_into().expect("to version"));
+    let codec_len = u32::from_le_bytes(encoded[9..13].try_into().expect("codec length")) as usize;
+    if encoded.len() != 13 + codec_len || to_version <= from_version {
+        return Err(CollectionError::CorruptMetadata);
+    }
+    Ok(CollectionMigration {
+        from_version,
+        to_version,
+        codec: encoded[13..].to_vec(),
     })
 }
 
@@ -658,6 +737,42 @@ mod tests {
         let definition = store.collection_definition(b"events").unwrap().unwrap();
         assert_eq!(definition.schema_version, 2);
         assert_eq!(definition.codec, b"cbor");
+        drop(store);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn schema_migration_history_is_atomic_and_ordered() {
+        let path = temp_store_path("migration-history");
+        let mut store = Store::open(&path).unwrap();
+        store
+            .create_collection(b"events", &CollectionDefinition::default())
+            .unwrap();
+        assert!(
+            store
+                .migrate_collection_schema(b"events", 1, 2, b"json-v2")
+                .unwrap()
+        );
+        assert!(
+            store
+                .migrate_collection_schema(b"events", 2, 3, b"json-v3")
+                .unwrap()
+        );
+        assert_eq!(
+            store.collection_migrations(b"events").unwrap(),
+            vec![
+                CollectionMigration {
+                    from_version: 1,
+                    to_version: 2,
+                    codec: b"json-v2".to_vec(),
+                },
+                CollectionMigration {
+                    from_version: 2,
+                    to_version: 3,
+                    codec: b"json-v3".to_vec(),
+                },
+            ]
+        );
         drop(store);
         let _ = fs::remove_file(path);
     }

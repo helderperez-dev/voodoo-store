@@ -12,9 +12,9 @@ It is being built for the Voodoo ecosystem, but the core is not coupled to Voodo
 
 ## Status
 
-**Current published Python binding: v0.2.2. Core and bindings remain pre-1.0.**
+**Current Python binding line: v0.3.0. Core and bindings remain pre-1.0.**
 
-Voodoo Store is pre-1.0, but the Rust core and the published Python binding are already suitable for controlled single-node development and production experiments where the current compatibility and operational limits are understood. The next integration line is **0.3 Native Surface Convergence**: exposing more of the existing Rust primitives directly to Python and Voodoo rather than reimplementing them over KV.
+Voodoo Store is pre-1.0, but the Rust core and the published Python binding are already suitable for controlled single-node development and production experiments where the current compatibility and operational limits are understood. The **0.3 Native Surface Convergence** milestone is closed: the published binding exposes the supported native primitives directly to Python and Voodoo without depending on internal KV encodings.
 
 The current engine includes:
 
@@ -69,6 +69,7 @@ COMMIT
 If that transaction does not commit, none of those staged mutations become visible after recovery.
 
 See `docs/QUICKSTART.md` for the full walkthrough.
+See `docs/VERSIONING.md` for package, format, and Python binding compatibility.
 
 ## North Star
 
@@ -166,6 +167,12 @@ let store = Store::open_with_options(
 
 Only an incomplete physical tail is automatically repairable. Corruption inside the durable prefix is surfaced as an error rather than silently discarded.
 
+The CLI keeps repair explicit and read-only by default. Run
+`voodoo-store repair <path>` to inspect a torn tail; after taking a backup,
+repeat with `--confirm-torn-tail` to authorize truncation. The command verifies
+the store again after repair. It never attempts to rewrite corruption inside a
+previously valid durable prefix.
+
 ## Current good-fit workloads
 
 The current pre-1.0 line is a reasonable target for controlled use in:
@@ -179,21 +186,34 @@ The current pre-1.0 line is a reasonable target for controlled use in:
 
 Pin the exact Store version and keep backups for important pre-1.0 stores.
 
+Python operators can create a verified JSON sidecar alongside a backup:
+
+```python
+from voodoo_store import create_backup_manifest, verify_backup_manifest
+
+manifest = create_backup_manifest(store, "application.backup.vstore")
+verify_backup_manifest("application.backup.vstore", "application.backup.vstore.manifest.json")
+```
+
 ## Known pre-1.0 limits
 
 The main remaining work before a 1.0 claim includes:
 
-- continuous fuzzing and long-running durability soak tests;
+- continuous hosted fuzzing, filesystem-specific power-loss certification, and
+  stronger repair tooling;
 - filesystem/power-loss proof for generation activation and stronger repair tooling;
 - completing Python/native convergence for cross-domain transactions;
 - migrating Voodoo Framework compatibility adapters onto the native messaging/object/query surfaces;
 - richer Collection migration/composite-index/query-planner support and physical ordered range seeks;
 - live-query/watch convenience APIs above the durable change feed;
-- quotas, richer metrics and tracing;
-- streaming object I/O and lifecycle policies;
+- streaming object writes and zero-copy/on-disk reads (bounded native chunk
+  reads are available today);
 - complete C ABI coverage and additional first-class language bindings;
 - encryption-at-rest/key-rotation design;
 - later replication/sync and Voodoo Protocol integration.
+
+Namespace/file quotas, structured health metrics, tracing hooks, and bounded
+object lifecycle/retention policies are already part of the v0.3.0 contract.
 
 Store Studio and distributed operation are later milestones and do not block controlled single-node use.
 
@@ -213,7 +233,7 @@ The CLI also exposes lifecycle, Queue, Collection, Messaging, Object, Job, Sched
 
 ## C ABI
 
-`voodoo-store-ffi` is the portability foundation for non-Rust bindings. The current ABI includes Store handles, KV operations, buffered transactions, thread-local `last_error` reporting and panic containment. Higher-level primitive coverage is still expanding before the ABI is considered complete.
+`voodoo-store-ffi` is the portability foundation for non-Rust bindings. The current ABI includes Store handles, KV operations, buffered transactions, thread-local `last_error` reporting and panic containment. The checked-in C consumer (`crates/voodoo-store-ffi/examples/c_consumer.c`) is compiled and executed by CI and release preflight; higher-level primitive coverage is still expanding.
 
 Public header:
 
@@ -231,6 +251,9 @@ crates/
 
 include/
   voodoo_store.h
+
+examples/
+  c_consumer.c       # committed ABI consumer smoke
 
 docs/
   ARCHITECTURE.md

@@ -1,0 +1,30 @@
+name: Recovery campaign
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 0"
+
+jobs:
+  recovery:
+    name: crash, corruption, and restore campaign
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Rust recovery and crash tests
+        run: |
+          cargo test -p voodoo-store-core --test process_crash --test recovery_faults --test state_model
+          cargo test -p voodoo-store-core --test format_mutation
+          cargo test -p voodoo-store-core --test soak
+      - name: Build Python binding
+        run: |
+          python -m pip install "maturin>=1.9,<2" pytest
+          python -m maturin build --release --out dist
+          python -m pip install --force-reinstall dist/*.whl
+      - name: Python backup and restore tests
+        run: python -m pytest -q python/tests/test_operations.py

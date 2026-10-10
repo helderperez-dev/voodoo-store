@@ -1,0 +1,31 @@
+{
+  "schema_contract_version": 1,
+  "policy": "compare-and-swap",
+  "rollback_policy": "forward-only-restore-or-reverse-migration",
+  "collections": [
+    {
+      "name": "lead",
+      "codec": "json",
+      "versions": [
+        {"from": 1, "to": 2, "codec": "json-v2"}
+      ]
+    },
+    {
+      "name": "order",
+      "codec": "json",
+      "versions": [
+        {"from": 1, "to": 2, "codec": "json-v2"},
+        {"from": 2, "to": 3, "codec": "json-v3"}
+      ]
+    },
+    {
+      "name": "user",
+      "codec": "json",
+      "versions": [
+        {"from": 1, "to": 2, "codec": "json-v2"},
+        {"from": 2, "to": 3, "codec": "json-v3"},
+        {"from": 3, "to": 4, "codec": "json-v4"}
+      ]
+    }
+  ]
+}

@@ -3,7 +3,7 @@ use std::process::ExitCode;
 
 use voodoo_store_core::{
     CollectionDefinition, IndexDefinition, IndexValue, JobSpec, PushOptions, ScheduleMode, Store,
-    TriggerSource,
+    StoreOptions, TriggerSource,
 };
 
 fn main() -> ExitCode {
@@ -41,8 +41,9 @@ fn run() -> Result<(), Box<dyn Error>> {
             store.delete(args[3].as_bytes())?;
             println!("ok");
         }
-        "health" => health(&args)?,
+        "health" | "inspect" => health(&args)?,
         "verify" => verify(&args)?,
+        "repair" => repair(&args)?,
         "backup" => {
             require_len(&args, 4)?;
             let store = Store::open(&args[2])?;
@@ -490,7 +491,51 @@ fn health(args: &[String]) -> Result<(), Box<dyn Error>> {
     println!("user_keys={}", report.storage.user_keys);
     println!("internal_keys={}", report.storage.internal_keys);
     println!("live_bytes={}", report.storage.live_bytes());
+    println!(
+        "compaction_backlog_bytes={}",
+        report.compaction_backlog_bytes
+    );
+    println!("lock_contentions_total={}", report.lock_contentions_total);
+    println!("object_reads_total={}", report.object_reads_total);
+    println!("object_bytes_read_total={}", report.object_bytes_read_total);
+    println!("queue_ready={}", report.queue_ready);
+    println!("queue_leased={}", report.queue_leased);
+    println!("queue_dead={}", report.queue_dead);
+    println!("queue_total={}", report.queue_total);
+    println!(
+        "queue_oldest_ready_at_ms={:?}",
+        report.queue_oldest_ready_at_ms
+    );
+    println!("queue_ready_lag_ms={:?}", report.queue_ready_lag_ms);
     println!("amplification={:.3}", report.storage.amplification_ratio());
+    println!("metrics.commits={}", report.metrics.commits);
+    println!("metrics.puts={}", report.metrics.puts);
+    println!("metrics.deletes={}", report.metrics.deletes);
+    println!(
+        "metrics.commit_latency_max_us={}",
+        report.metrics.commit_latency_max_us
+    );
+    println!(
+        "metrics.fsync_latency_max_us={}",
+        report.metrics.fsync_latency_max_us
+    );
+    println!("metrics.commit_errors={}", report.metrics.commit_errors);
+    println!(
+        "metrics.recovery_records={}",
+        report.metrics.recovery_records
+    );
+    println!("metrics.queue_claims={}", report.metrics.queue_claims);
+    println!("metrics.queue_acks={}", report.metrics.queue_acks);
+    println!("metrics.object_puts={}", report.metrics.object_puts);
+    println!(
+        "metrics.object_bytes_written={}",
+        report.metrics.object_bytes_written
+    );
+    println!("metrics.object_gc_runs={}", report.metrics.object_gc_runs);
+    println!(
+        "metrics.object_gc_removed={}",
+        report.metrics.object_gc_removed
+    );
     for namespace in report.namespaces {
         println!(
             "namespace.{}.keys={} namespace.{}.value_bytes={}",
@@ -515,6 +560,39 @@ fn verify(args: &[String]) -> Result<(), Box<dyn Error>> {
     println!("pending_transactions={}", report.pending_transactions);
     println!("keys={}", report.keys);
     println!("torn_tail={}", report.has_torn_tail());
+    Ok(())
+}
+
+fn repair(args: &[String]) -> Result<(), Box<dyn Error>> {
+    if args.len() < 3 || args.len() > 4 {
+        return Err("usage: voodoo-store repair <store> [--confirm-torn-tail]".into());
+    }
+    let path = &args[2];
+    let before = Store::verify(path)?;
+    println!("torn_tail={}", before.has_torn_tail());
+    if !before.has_torn_tail() {
+        println!("repaired=false");
+        return Ok(());
+    }
+    if args.get(3).map(String::as_str) != Some("--confirm-torn-tail") {
+        return Err(
+            "refusing mutation: torn tail detected; rerun with --confirm-torn-tail after taking a backup"
+                .into(),
+        );
+    }
+    drop(Store::open_with_options(
+        path,
+        StoreOptions {
+            repair_torn_tail: true,
+            ..StoreOptions::default()
+        },
+    )?);
+    let after = Store::verify(path)?;
+    if after.has_torn_tail() {
+        return Err("torn tail remains after repair".into());
+    }
+    println!("repaired=true");
+    println!("valid_bytes={}", after.valid_bytes);
     Ok(())
 }
 
@@ -774,7 +852,7 @@ fn print_usage() {
     println!(
         "Voodoo Store 0.1\n\
          \n\
-         Core: put get delete health verify backup restore-copy compact-copy snapshot\n\
+         Core: put get delete health inspect verify repair backup restore-copy compact-copy snapshot\n\
          TTL: ttl-put ttl-get-at ttl-clear ttl-purge\n\
          Collections: collection-create collection-index collection-put collection-get collection-query collection-delete\n\
          Queue: queue-push queue-claim queue-ack queue-nack queue-dead queue-stats\n\

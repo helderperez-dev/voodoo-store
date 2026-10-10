@@ -1,6 +1,6 @@
-# Voodoo Store v0.1 Quickstart
+# Voodoo Store v0.3 Quickstart
 
-Voodoo Store v0.1 is a usable embedded application-state engine. It is still pre-1.0, but the current single-node engine already provides durable application data, transactions, TTL, collections/indexes, queues, jobs, scheduling, cron, triggers, streams/topics, consumer groups, request/reply state, objects, workflows, transactional outbox events, backup/restore/snapshots and operational health without requiring Redis, PostgreSQL, Kafka, RabbitMQ, Celery or S3 by default.
+Voodoo Store v0.3.0 is a usable embedded application-state engine. It is still pre-1.0, but the current single-node engine already provides durable application data, transactions, TTL, collections/indexes, queues, jobs, scheduling, cron, triggers, streams/topics, consumer groups, request/reply state, objects, workflows, transactional outbox events, backup/restore/snapshots, quotas and operational health without requiring Redis, PostgreSQL, Kafka, RabbitMQ, Celery or S3 by default.
 
 The core remains framework-agnostic. Voodoo Runtime, language bindings and external adapters sit above it.
 
@@ -161,13 +161,17 @@ Voodoo Store can persist request/reply correlation without executing RPC code it
 
 ## 14. Objects
 
-The embedded object layer currently provides SHA-256 content-addressed identity, deduplication, integrity verification, references and orphan garbage collection. Streaming I/O and richer lifecycle/retention policies remain later work.
+The embedded object layer provides SHA-256 content-addressed identity,
+deduplication, integrity verification, references, orphan garbage collection,
+bounded metadata, and expiry-based retention. The Python binding exposes
+bounded native chunk reads; true streaming writes and zero-copy/on-disk reads
+remain later engine work.
 
 ## 15. Workflows / HITL
 
 Workflow persistence includes durable instance state, current step, history, timers, signals, waits and restart/resume state. Voodoo Store persists orchestration state; the workflow executor remains outside the storage engine.
 
-## 16. What is safe to use in v0.1
+## 16. What is safe to use in v0.3
 
 Good current targets:
 
@@ -179,10 +183,14 @@ Good current targets:
 - edge gateways and robotics controllers
 - applications that benefit from durable Jobs/Queues without deploying external infrastructure
 
-Treat v0.1 as pre-1.0 for file-format/API compatibility. Back up important stores before upgrades and pin the exact Store version in production experiments.
+Treat v0.3 as pre-1.0 for file-format/API compatibility. Back up important stores before upgrades and pin the exact Store version in production experiments.
 
 ## 17. What still blocks a 1.0 claim
 
-The remaining hardening work includes continuous fuzzing/soak tests, identity-preserving log generations and in-place compaction, richer query/range/composite indexes, CDC/live feeds, full cross-domain transaction coverage, quotas/metrics/tracing, complete C ABI/bindings, encryption-at-rest design and later replication/sync.
+The remaining hardening work includes hosted/filesystem-specific power-loss
+certification, identity-preserving log generations and in-place compaction,
+richer query/range/composite indexes, live-query convenience APIs, full
+cross-domain transaction coverage, complete C ABI/bindings,
+encryption-at-rest design, and later replication/sync.
 
-Those are 1.0/distributed milestones. They do not prevent beginning controlled use of the current single-node v0.1 engine today.
+Those are 1.0/distributed milestones. They do not prevent controlled use of the current single-node v0.3 engine today.

@@ -1,6 +1,6 @@
 # Voodoo Store Language Binding Contract
 
-Status: living binding contract. Python binding v0.2.2 is published; 0.3 is converging the Python surface on the existing Rust-core primitives.
+Status: living binding contract. Python binding v0.3.0 is the current line and exposes the converged Rust-core primitives.
 
 This document defines the boundary between `voodoo-store-core` and language-specific bindings. It exists so Python, Node.js, Go, Swift, Java/.NET, and the Voodoo Framework can integrate without leaking host-runtime assumptions into the storage engine.
 
@@ -119,6 +119,7 @@ Conceptually:
 with store.transaction() as tx:
     tx.put(...)
     tx.collection_upsert(...)
+    tx.collection_delete(...)
     tx.enqueue_job(...)
     tx.queue_push(...)
     tx.stream_append(...)
@@ -149,6 +150,8 @@ Bindings should expose typed wrappers around the existing byte-oriented collecti
 
 - create/read collection definition
 - schema-version migration guard
+- durable migration history (`collection_migrations`) recorded atomically with
+  each successful schema transition
 - define/read secondary indexes
 - upsert/get/delete records
 - scan collection
@@ -156,6 +159,13 @@ Bindings should expose typed wrappers around the existing byte-oriented collecti
 - range query with inclusive/exclusive bounds, order, and limit
 
 The binding may map records to host-language objects only through an explicit codec layer.
+
+The Python binding's `migrate_collection` helper is an application-level
+transform runner: it applies an idempotent transformer in bounded native
+transactions, advances the schema only after all batches succeed, and leaves
+the prior schema active when transformation fails. It does not claim automatic
+rollback of already committed batches; operators must restore a verified backup
+or provide a reverse migration.
 
 ## Jobs, queues, scheduler, and triggers
 
@@ -207,7 +217,13 @@ A callback/async API is delivery ergonomics, not a second CDC implementation.
 
 Object identifiers remain content hashes over bytes.
 
-Bindings must preserve content-addressing and immutable object identity. They may expose stream/file-like convenience APIs later without changing Object IDs or reference semantics.
+Bindings must preserve content-addressing and immutable object identity. The
+Python binding exposes `Store.get_object_chunk(id, offset, limit)` for bounded
+native reads and `iter_object_chunks(store, id, chunk_size=...)` as a validated
+iterator. Missing objects remain distinguishable from empty objects (the
+iterator raises `KeyError`), chunk order is deterministic, and neither helper
+changes object IDs, metadata, or reference semantics. True streaming writes
+and zero-copy/on-disk reads require a future engine storage redesign.
 
 ## Workflows
 

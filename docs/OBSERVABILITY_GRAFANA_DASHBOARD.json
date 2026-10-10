@@ -1,0 +1,212 @@
+{
+  "datasource": {
+    "type": "prometheus",
+    "uid": "voodoo-prometheus"
+  },
+  "panels": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "voodoo-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "targets": [
+        {
+          "expr": "voodoo_store_health_details_native_health_storage_file_bytes",
+          "legendFormat": "voodoo_store_health_details_native_health_storage_file_bytes",
+          "refId": "A"
+        },
+        {
+          "expr": "voodoo_store_health_details_native_health_storage_live_bytes",
+          "legendFormat": "voodoo_store_health_details_native_health_storage_live_bytes",
+          "refId": "B"
+        },
+        {
+          "expr": "voodoo_store_health_details_native_health_compaction_backlog_bytes",
+          "legendFormat": "voodoo_store_health_details_native_health_compaction_backlog_bytes",
+          "refId": "C"
+        }
+      ],
+      "title": "Storage growth",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "voodoo-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "count-and-milliseconds"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "id": 2,
+      "targets": [
+        {
+          "expr": "voodoo_store_health_details_native_health_queue_ready",
+          "legendFormat": "voodoo_store_health_details_native_health_queue_ready",
+          "refId": "A"
+        },
+        {
+          "expr": "voodoo_store_health_details_native_health_queue_leased",
+          "legendFormat": "voodoo_store_health_details_native_health_queue_leased",
+          "refId": "B"
+        },
+        {
+          "expr": "voodoo_store_health_details_native_health_queue_dead",
+          "legendFormat": "voodoo_store_health_details_native_health_queue_dead",
+          "refId": "C"
+        },
+        {
+          "expr": "voodoo_store_health_details_native_health_queue_total",
+          "legendFormat": "voodoo_store_health_details_native_health_queue_total",
+          "refId": "D"
+        },
+        {
+          "expr": "voodoo_store_health_details_native_health_queue_oldest_ready_at_ms",
+          "legendFormat": "voodoo_store_health_details_native_health_queue_oldest_ready_at_ms",
+          "refId": "E"
+        },
+        {
+          "expr": "voodoo_store_health_details_native_health_queue_ready_lag_ms",
+          "legendFormat": "voodoo_store_health_details_native_health_queue_ready_lag_ms",
+          "refId": "F"
+        }
+      ],
+      "title": "Queue health",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "voodoo-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "count-and-microseconds"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "id": 3,
+      "targets": [
+        {
+          "expr": "voodoo_store_health_details_native_health_metrics_commits",
+          "legendFormat": "voodoo_store_health_details_native_health_metrics_commits",
+          "refId": "A"
+        },
+        {
+          "expr": "voodoo_store_health_details_native_health_metrics_commit_errors",
+          "legendFormat": "voodoo_store_health_details_native_health_metrics_commit_errors",
+          "refId": "B"
+        },
+        {
+          "expr": "voodoo_store_health_details_native_health_metrics_commit_latency_max_us",
+          "legendFormat": "voodoo_store_health_details_native_health_metrics_commit_latency_max_us",
+          "refId": "C"
+        },
+        {
+          "expr": "voodoo_store_health_details_native_health_metrics_fsync_latency_max_us",
+          "legendFormat": "voodoo_store_health_details_native_health_metrics_fsync_latency_max_us",
+          "refId": "D"
+        }
+      ],
+      "title": "Durability latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "voodoo-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "count-and-bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "id": 4,
+      "targets": [
+        {
+          "expr": "voodoo_store_health_details_native_health_metrics_recovery_records",
+          "legendFormat": "voodoo_store_health_details_native_health_metrics_recovery_records",
+          "refId": "A"
+        },
+        {
+          "expr": "voodoo_store_health_details_native_health_metrics_object_bytes_written",
+          "legendFormat": "voodoo_store_health_details_native_health_metrics_object_bytes_written",
+          "refId": "B"
+        },
+        {
+          "expr": "voodoo_store_health_details_native_health_lock_contentions_total",
+          "legendFormat": "voodoo_store_health_details_native_health_lock_contentions_total",
+          "refId": "C"
+        }
+      ],
+      "title": "Recovery and objects",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "15s",
+  "schemaVersion": 39,
+  "timezone": "utc",
+  "title": "Voodoo Store operations",
+  "uid": "voodoo-store-operations",
+  "version": 1,
+  "voodooContract": {
+    "alerts": [
+      {
+        "condition": "greater-than",
+        "id": "queue-dead-letters",
+        "severity": "warning",
+        "signal": "queue_dead",
+        "threshold": 0
+      },
+      {
+        "condition": "greater-than",
+        "id": "commit-errors",
+        "severity": "critical",
+        "signal": "metrics.commit_errors",
+        "threshold": 0
+      },
+      {
+        "condition": "greater-than",
+        "id": "compaction-backlog",
+        "severity": "warning",
+        "signal": "compaction_backlog_bytes",
+        "threshold": 0
+      }
+    ],
+    "schema_version": 1
+  }
+}

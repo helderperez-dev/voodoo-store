@@ -1,0 +1,18 @@
+{
+  "format_major": 1,
+  "current_format_minor": 0,
+  "read_policy": "same-major",
+  "write_policy": "current-minor",
+  "backup_policy": "verify-before-restore",
+  "migration_required_for_major_change": true,
+  "supported_python_binding": ">=0.3.0,<0.4.0",
+  "supported_previous_releases": ["0.2.2"],
+  "historical_releases": [
+    {
+      "release": "0.2.2",
+      "format_major": 1,
+      "format_minor": 0,
+      "restore_policy": "same-major"
+    }
+  ]
+}

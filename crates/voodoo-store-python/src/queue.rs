@@ -90,7 +90,13 @@ impl PyStore {
         })
     }
 
-    fn queue_stats(&self, py: Python<'_>, name: &[u8]) -> PyResult<Py<PyDict>> {
+    #[pyo3(signature = (name, *, now_ms = None))]
+    fn queue_stats(
+        &self,
+        py: Python<'_>,
+        name: &[u8],
+        now_ms: Option<i64>,
+    ) -> PyResult<Py<PyDict>> {
         with_store_mut(&self.slot, |store| {
             let queue = store.queue(name).map_err(map_error)?;
             let stats = queue.stats().map_err(map_error)?;
@@ -99,6 +105,9 @@ impl PyStore {
             result.set_item("leased", stats.leased)?;
             result.set_item("dead", stats.dead)?;
             result.set_item("total", stats.total)?;
+            if let Some(now_ms) = now_ms {
+                result.set_item("ready_lag_ms", stats.ready_lag_ms(now_ms))?;
+            }
             Ok(result.unbind())
         })
     }

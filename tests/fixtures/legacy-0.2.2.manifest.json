@@ -1,0 +1,8 @@
+{
+  "release": "0.2.2",
+  "format_major": 1,
+  "format_minor": 0,
+  "fixture": "legacy-0.2.2.vstore",
+  "sha256": "79e7769d2d97f8ba019a680d9fd291b847b6ad584e745488fedcfdff7e3935ec",
+  "purpose": "cross-version restore certification fixture"
+}

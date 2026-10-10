@@ -1,0 +1,51 @@
+name: Store disaster-recovery game day
+
+on:
+  schedule:
+    - cron: "43 3 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Resolve published Store version
+        id: version
+        run: |
+          VERSION=$(sed -n 's/^__version__ = "\([^"]*\)"/\1/p' python/voodoo_store/__init__.py)
+          test -n "$VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Install exact published Store wheel
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          python -m pip install --only-binary=:all: "voodoo-store==${VERSION}"
+          python - <<'PY'
+          import importlib.metadata
+          import voodoo_store
+
+          installed = importlib.metadata.version("voodoo-store")
+          assert installed == voodoo_store.__version__
+          print(f"verified published Store artifact {installed}")
+          PY
+      - name: Run disposable recovery drill
+        run: >-
+          python scripts/dr_game_day.py
+          --fixture tests/fixtures/legacy-0.2.2.vstore
+          --artifact-version "${{ steps.version.outputs.version }}"
+          | tee /tmp/voodoo-store-dr-game-day.json
+      - name: Validate recovery evidence
+        run: python scripts/check_dr_evidence.py /tmp/voodoo-store-dr-game-day.json
+      - name: Upload recovery evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: voodoo-store-dr-game-day
+          path: /tmp/voodoo-store-dr-game-day.json

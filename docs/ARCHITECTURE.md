@@ -326,6 +326,10 @@ BEGIN
 COMMIT
 ```
 
+The Python binding exposes collection deletion inside this same boundary, so
+Runtime fallback outbox records can move from pending to delivered without a
+split commit.
+
 After a successful durable commit, all effects exist. Before commit, none are externally visible. Recovery must never expose a partial committed transaction.
 
 This allows embedded deployments to avoid entire classes of transactional-outbox and cross-service consistency problems.

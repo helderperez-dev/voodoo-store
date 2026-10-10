@@ -55,6 +55,65 @@ pub struct QueueStats {
     pub leased: u64,
     pub dead: u64,
     pub total: u64,
+    /// Earliest ready-message deadline, used to derive bounded queue lag.
+    pub oldest_ready_at_ms: Option<i64>,
+}
+
+impl QueueStats {
+    /// Return the age of the oldest currently available ready message.
+    pub fn ready_lag_ms(&self, now_ms: i64) -> Option<u64> {
+        let oldest = self.oldest_ready_at_ms?;
+        if oldest > now_ms {
+            return Some(0);
+        }
+        u64::try_from(now_ms - oldest).ok()
+    }
+}
+
+/// Aggregate queue state across every queue in a Store.
+///
+/// This is intentionally a read-only health primitive. It does not expose
+/// queue names or message payloads; callers only receive bounded operational
+/// counters and the oldest ready timestamp needed to derive lag.
+pub(crate) fn aggregate_stats(store: &Store) -> Result<QueueStats, QueueError> {
+    let mut stats = QueueStats::default();
+    for (key, value) in store.scan_prefix(QUEUE_PREFIX) {
+        // Queue metadata uses `:next`; only message records carry `:m:` and
+        // can contribute to operational depth/lag.
+        if !key.windows(3).any(|window| window == b":m:") {
+            continue;
+        }
+        let message = decode_message(&value)?;
+        stats.total = stats
+            .total
+            .checked_add(1)
+            .ok_or(QueueError::CountOverflow)?;
+        match message.state {
+            QueueState::Ready => {
+                stats.ready = stats
+                    .ready
+                    .checked_add(1)
+                    .ok_or(QueueError::CountOverflow)?;
+                stats.oldest_ready_at_ms = Some(
+                    stats
+                        .oldest_ready_at_ms
+                        .map_or(message.available_at_ms, |oldest| {
+                            oldest.min(message.available_at_ms)
+                        }),
+                );
+            }
+            QueueState::Leased => {
+                stats.leased = stats
+                    .leased
+                    .checked_add(1)
+                    .ok_or(QueueError::CountOverflow)?;
+            }
+            QueueState::Dead => {
+                stats.dead = stats.dead.checked_add(1).ok_or(QueueError::CountOverflow)?;
+            }
+        }
+    }
+    Ok(stats)
 }
 
 pub struct Queue<'a> {
@@ -185,6 +244,7 @@ impl<'a> Queue<'a> {
         message.state = QueueState::Leased;
         message.lease_until_ms = lease_until_ms;
         self.store.put_internal(&key, encode_message(&message)?)?;
+        self.store.record_queue_claim();
 
         Ok(Some(QueueMessage {
             id: message.id,
@@ -202,6 +262,7 @@ impl<'a> Queue<'a> {
         let message = self.load_message(&key)?.ok_or(QueueError::NotFound(id))?;
         validate_lease(&message, lease_generation)?;
         self.store.delete_internal(key)?;
+        self.store.record_queue_ack();
         Ok(())
     }
 
@@ -245,6 +306,13 @@ impl<'a> Queue<'a> {
                         .ready
                         .checked_add(1)
                         .ok_or(QueueError::CountOverflow)?;
+                    stats.oldest_ready_at_ms = Some(
+                        stats
+                            .oldest_ready_at_ms
+                            .map_or(message.available_at_ms, |oldest| {
+                                oldest.min(message.available_at_ms)
+                            }),
+                    );
                 }
                 QueueState::Leased => {
                     stats.leased = stats
@@ -458,6 +526,8 @@ mod tests {
             assert_eq!(message.payload, b"hello");
             queue.ack(message.id, message.lease_generation).unwrap();
             assert_eq!(queue.stats().unwrap().total, 0);
+            assert_eq!(store.metrics().queue_claims, 1);
+            assert_eq!(store.metrics().queue_acks, 1);
         }
         let _ = fs::remove_file(path);
     }
@@ -488,6 +558,21 @@ mod tests {
             assert!(queue.claim(100, 1_000).unwrap().is_none());
             assert!(queue.claim(5_000, 1_000).unwrap().is_some());
         }
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn queue_stats_reports_oldest_ready_lag_without_counting_future_work() {
+        let path = temp_store_path("queue-lag");
+        let mut store = Store::open(&path).unwrap();
+        let mut queue = store.queue(b"work").unwrap();
+        queue.push_at(b"future", 2_000).unwrap();
+        queue.push_at(b"ready", 900).unwrap();
+
+        let stats = queue.stats().unwrap();
+        assert_eq!(stats.oldest_ready_at_ms, Some(900));
+        assert_eq!(stats.ready_lag_ms(1_000), Some(100));
+        assert_eq!(stats.ready_lag_ms(500), Some(0));
         let _ = fs::remove_file(path);
     }
 

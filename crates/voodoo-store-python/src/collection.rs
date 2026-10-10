@@ -85,6 +85,46 @@ impl PyStore {
         })
     }
 
+    #[pyo3(signature = (collection, expected_version, next_version, *, codec = None))]
+    fn migrate_collection_schema(
+        &self,
+        collection: &[u8],
+        expected_version: u32,
+        next_version: u32,
+        codec: Option<Vec<u8>>,
+    ) -> PyResult<bool> {
+        let codec = codec.unwrap_or_else(|| b"bytes".to_vec());
+        with_store_mut(&self.slot, |store| {
+            store
+                .migrate_collection_schema(collection, expected_version, next_version, codec)
+                .map_err(map_collection_error)
+        })
+    }
+
+    fn collection_migrations(
+        &self,
+        py: Python<'_>,
+        collection: &[u8],
+    ) -> PyResult<Vec<(u32, u32, Py<PyBytes>)>> {
+        with_store(&self.slot, |store| {
+            store
+                .collection_migrations(collection)
+                .map(|migrations| {
+                    migrations
+                        .into_iter()
+                        .map(|migration| {
+                            (
+                                migration.from_version,
+                                migration.to_version,
+                                PyBytes::new(py, &migration.codec).unbind(),
+                            )
+                        })
+                        .collect()
+                })
+                .map_err(map_collection_error)
+        })
+    }
+
     #[pyo3(signature = (collection, name, *, unique = false))]
     fn define_index(&self, collection: &[u8], name: &[u8], unique: bool) -> PyResult<bool> {
         let definition = IndexDefinition {
@@ -250,6 +290,15 @@ impl PyTransaction {
             primary_key: primary_key.to_vec(),
             value: value.to_vec(),
             indexes: core_indexes(indexes),
+        });
+        Ok(())
+    }
+
+    fn delete_record(&mut self, collection: &[u8], primary_key: &[u8]) -> PyResult<()> {
+        self.ensure_open()?;
+        self.operations.push(PendingOperation::DeleteRecord {
+            collection: collection.to_vec(),
+            primary_key: primary_key.to_vec(),
         });
         Ok(())
     }

@@ -44,6 +44,47 @@ fn py_health(py: Python<'_>, report: HealthReport) -> PyResult<Py<PyDict>> {
     result.set_item("store_id", PyBytes::new(py, &report.store_id))?;
     result.set_item("format_major", report.format_major)?;
     result.set_item("format_minor", report.format_minor)?;
+    result.set_item("max_bytes", report.max_bytes)?;
+    result.set_item("namespace_max_bytes", report.namespace_max_bytes)?;
+    result.set_item("compaction_backlog_bytes", report.compaction_backlog_bytes)?;
+    result.set_item("lock_contentions_total", report.lock_contentions_total)?;
+    result.set_item("object_reads_total", report.object_reads_total)?;
+    result.set_item("object_bytes_read_total", report.object_bytes_read_total)?;
+    result.set_item("queue_ready", report.queue_ready)?;
+    result.set_item("queue_leased", report.queue_leased)?;
+    result.set_item("queue_dead", report.queue_dead)?;
+    result.set_item("queue_total", report.queue_total)?;
+    result.set_item("queue_oldest_ready_at_ms", report.queue_oldest_ready_at_ms)?;
+    result.set_item("queue_ready_lag_ms", report.queue_ready_lag_ms)?;
+    let metrics = PyDict::new(py);
+    metrics.set_item("commits", report.metrics.commits)?;
+    metrics.set_item("puts", report.metrics.puts)?;
+    metrics.set_item("deletes", report.metrics.deletes)?;
+    metrics.set_item("records_appended", report.metrics.records_appended)?;
+    metrics.set_item("bytes_appended", report.metrics.bytes_appended)?;
+    metrics.set_item("recovery_records", report.metrics.recovery_records)?;
+    metrics.set_item(
+        "commit_latency_total_us",
+        report.metrics.commit_latency_total_us,
+    )?;
+    metrics.set_item(
+        "commit_latency_max_us",
+        report.metrics.commit_latency_max_us,
+    )?;
+    metrics.set_item(
+        "fsync_latency_total_us",
+        report.metrics.fsync_latency_total_us,
+    )?;
+    metrics.set_item("fsync_latency_max_us", report.metrics.fsync_latency_max_us)?;
+    metrics.set_item("commit_errors", report.metrics.commit_errors)?;
+    metrics.set_item("queue_claims", report.metrics.queue_claims)?;
+    metrics.set_item("queue_acks", report.metrics.queue_acks)?;
+    metrics.set_item("object_puts", report.metrics.object_puts)?;
+    metrics.set_item("object_bytes_written", report.metrics.object_bytes_written)?;
+    metrics.set_item("object_gc_runs", report.metrics.object_gc_runs)?;
+    metrics.set_item("object_gc_removed", report.metrics.object_gc_removed)?;
+    result.set_item("metrics", metrics)?;
+    result.set_item("within_limit", report.within_limit)?;
     result.set_item("storage", py_storage_stats(py, report.storage)?)?;
 
     let namespaces = PyList::empty(py);

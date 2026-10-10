@@ -64,6 +64,15 @@ def test_queue_nack_dead_letter_and_purge(tmp_path):
         assert store.queue_stats(b"work")["total"] == 0
 
 
+def test_queue_stats_reports_ready_lag_when_requested(tmp_path):
+    with Store.open(tmp_path / "queue-lag.vstore") as store:
+        store.push_queue(b"work", b"future", available_at_ms=2_000)
+        store.push_queue(b"work", b"ready", available_at_ms=900)
+
+        assert store.queue_stats(b"work", now_ms=1_000)["ready_lag_ms"] == 100
+        assert store.queue_stats(b"work", now_ms=500)["ready_lag_ms"] == 0
+
+
 def test_queue_survives_reopen(tmp_path):
     path = tmp_path / "queue-reopen.vstore"
 

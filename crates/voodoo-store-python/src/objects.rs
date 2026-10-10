@@ -24,11 +24,51 @@ impl PyStore {
         })
     }
 
+    fn put_object_with_metadata(
+        &self,
+        py: Python<'_>,
+        content: &[u8],
+        metadata: &Bound<'_, PyDict>,
+    ) -> PyResult<Py<PyBytes>> {
+        let metadata = metadata
+            .iter()
+            .map(|(key, value)| {
+                Ok::<_, PyErr>((
+                    key.extract::<String>()?.into_bytes(),
+                    value.extract::<String>()?.into_bytes(),
+                ))
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        with_store_mut(&self.slot, |store| {
+            store
+                .put_object_with_metadata(content, metadata)
+                .map(|id| PyBytes::new(py, &id).unbind())
+                .map_err(map_object_error)
+        })
+    }
+
     fn get_object(&self, py: Python<'_>, id: &[u8]) -> PyResult<Option<Py<PyBytes>>> {
         let id = parse_object_id(id)?;
         with_store(&self.slot, |store| {
             store
                 .get_object(&id)
+                .map(|content| content.map(|value| PyBytes::new(py, value).unbind()))
+                .map_err(map_object_error)
+        })
+    }
+
+    #[pyo3(signature = (id, offset = 0, limit = 65536))]
+    fn get_object_chunk(
+        &self,
+        py: Python<'_>,
+        id: &[u8],
+        offset: usize,
+        limit: usize,
+    ) -> PyResult<Option<Py<PyBytes>>> {
+        let id = parse_object_id(id)?;
+        with_store(&self.slot, |store| {
+            store
+                .get_object_chunk(&id, offset, limit)
                 .map(|content| content.map(|value| PyBytes::new(py, value).unbind()))
                 .map_err(map_object_error)
         })
@@ -44,6 +84,16 @@ impl PyStore {
             let result = PyDict::new(py);
             result.set_item("id", PyBytes::new(py, &info.id))?;
             result.set_item("size", info.size)?;
+            if !info.metadata.is_empty() {
+                let metadata = PyDict::new(py);
+                for (key, value) in info.metadata {
+                    metadata.set_item(
+                        String::from_utf8_lossy(&key),
+                        String::from_utf8_lossy(&value),
+                    )?;
+                }
+                result.set_item("metadata", metadata)?;
+            }
             Ok(Some(result.unbind()))
         })
     }
@@ -117,6 +167,26 @@ impl PyStore {
             let report = store.gc_orphan_objects(limit).map_err(map_object_error)?;
             let result = PyDict::new(py);
             result.set_item("scanned", report.scanned)?;
+            result.set_item("referenced", report.referenced)?;
+            result.set_item("removed", report.removed)?;
+            Ok(result.unbind())
+        })
+    }
+
+    #[pyo3(signature = (now_unix, limit = 100))]
+    fn purge_expired_objects(
+        &self,
+        py: Python<'_>,
+        now_unix: i64,
+        limit: usize,
+    ) -> PyResult<Py<PyDict>> {
+        with_store_mut(&self.slot, |store| {
+            let report = store
+                .purge_expired_objects(now_unix, limit)
+                .map_err(map_object_error)?;
+            let result = PyDict::new(py);
+            result.set_item("scanned", report.scanned)?;
+            result.set_item("expired", report.expired)?;
             result.set_item("referenced", report.referenced)?;
             result.set_item("removed", report.removed)?;
             Ok(result.unbind())

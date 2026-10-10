@@ -11,6 +11,11 @@ publish = false
 name = "_native"
 path = "src/binding.rs"
 crate-type = ["cdylib"]
+# The binding is validated through maturin-built wheels and the Python suite.
+# Disabling Rust's standalone lib test harness avoids attempting to link a
+# second executable against Python's symbols during `cargo test --workspace`.
+test = false
+bench = false
 
 [dependencies]
 pyo3 = { version = "0.28", features = ["extension-module", "abi3-py39", "multiple-pymethods"] }

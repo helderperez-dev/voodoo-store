@@ -60,8 +60,13 @@ def test_durable_job_failure_retries_with_backoff(tmp_path):
         == "ready"
     )
 
-    assert store.claim_job(7_099, 10_000) is None
-    second = store.claim_job(7_100, 10_000)
+    # Retry timing is durably jittered within ±10% of the configured delay.
+    assert store.claim_job(6_900, 10_000) is None
+    second = None
+    for now_ms in range(6_900, 7_301):
+        second = store.claim_job(now_ms, 10_000)
+        if second is not None:
+            break
     assert second is not None
     assert second["id"] == job_id
     assert second["attempts"] == 2
