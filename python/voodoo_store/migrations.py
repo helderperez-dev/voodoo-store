@@ -10,11 +10,11 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Union
 
 from ._native import Store
 
-MigrationResult = bytes | tuple[bytes, Sequence[tuple[bytes, bytes]]]
+MigrationResult = Union[bytes, tuple[bytes, Sequence[tuple[bytes, bytes]]]]
 Transformer = Callable[[bytes, bytes, Sequence[tuple[bytes, bytes]]], MigrationResult]
 
 
