@@ -19,7 +19,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Restore retained benchmark history
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: /tmp/voodoo-store-performance-history.jsonl
           key: voodoo-store-performance-${{ github.run_id }}
@@ -45,7 +45,7 @@ jobs:
             /tmp/voodoo-store-performance.stdout.json
             /tmp/voodoo-store-performance-trend.json
       - name: Retain benchmark history for the next run
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: /tmp/voodoo-store-performance-history.jsonl
           key: voodoo-store-performance-${{ github.run_id }}
