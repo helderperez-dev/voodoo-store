@@ -165,7 +165,14 @@ jobs:
           else
             python -m pip uninstall --yes setuptools
           fi
-          python -m pip install "pip-audit==2.10.1"
+          # pip-audit 2.10.1 dropped Python 3.9 support. Keep the security
+          # gate active on the oldest supported interpreter with its last
+          # compatible release.
+          if python -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)'; then
+            python -m pip install "pip-audit==2.10.1"
+          else
+            python -m pip install "pip-audit==2.9.0"
+          fi
           python -m pip_audit --progress-spinner off
           python -m pytest -q python/tests
       - name: Verify package version
