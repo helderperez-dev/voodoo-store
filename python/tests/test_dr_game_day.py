@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from voodoo_store import __version__
 
 
 def test_game_day_accepts_retained_release_fixture() -> None:
@@ -26,7 +27,7 @@ def test_game_day_accepts_retained_release_fixture() -> None:
     )
     evidence = json.loads(result.stdout)
     assert evidence["status"] == "passed"
-    assert evidence["artifact_version"] == "0.3.0"
+    assert evidence["artifact_version"] == __version__
     assert evidence["fixture"].endswith("legacy-0.2.2.vstore")
     assert evidence["restored_keys"] >= 26
     assert evidence["compacted_keys"] >= 26

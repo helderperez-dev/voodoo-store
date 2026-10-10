@@ -60,15 +60,26 @@ jobs:
           if not tags:
               version = current
           else:
-              major, minor, patch = map(int, current.split("."))
-              bump = os.environ["BUMP"]
-              if bump == "major":
-                  major, minor, patch = major + 1, 0, 0
-              elif bump == "minor":
-                  minor, patch = minor + 1, 0
+              latest_tag_version = max(
+                  (tuple(map(int, tag.removeprefix("python-v").split("."))) for tag in tags),
+                  default=(0, 0, 0),
+              )
+              current_version = tuple(map(int, current.split(".")))
+              if current_version > latest_tag_version:
+                  # A previous run may have committed the calculated version
+                  # before a later quality job failed. Publish that prepared
+                  # version on retry instead of skipping another patch.
+                  version = current
               else:
-                  patch += 1
-              version = f"{major}.{minor}.{patch}"
+                  major, minor, patch = current_version
+                  bump = os.environ["BUMP"]
+                  if bump == "major":
+                      major, minor, patch = major + 1, 0, 0
+                  elif bump == "minor":
+                      minor, patch = minor + 1, 0
+                  else:
+                      patch += 1
+                  version = f"{major}.{minor}.{patch}"
 
           tag = f"python-v{version}"
           if tag in tags:
