@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -38,7 +38,7 @@ def create_backup_manifest(
     digest = hashlib.sha256(destination_path.read_bytes()).hexdigest()
     payload: dict[str, Any] = {
         "manifest_version": 1,
-        "created_at": datetime.now(UTC).isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
         "backup_path": destination_path.name,
         "bytes": copied_bytes,
         "sha256": digest,

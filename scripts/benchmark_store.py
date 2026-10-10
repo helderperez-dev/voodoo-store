@@ -9,7 +9,7 @@ import platform
 import sys
 import tempfile
 import time
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -35,7 +35,7 @@ def append_history(path: Path, result: dict[str, Any]) -> dict[str, Any]:
                 raise ValueError(f"benchmark history line {line_number} has no elapsed_ms")
     record = {
         "schema_version": BENCHMARK_SCHEMA_VERSION,
-        "recorded_at": datetime.now(UTC).isoformat(),
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
         "python": platform.python_version(),
         "platform": sys.platform,
         **result,
