@@ -157,9 +157,14 @@ jobs:
           python -m pip install "maturin>=1.9,<2" pytest
           python -m maturin build --release --out dist
           python -m pip install --force-reinstall dist/*.whl
-          # Hosted Python images can preinstall a vulnerable setuptools pin;
-          # upgrade it before auditing the release environment.
-          python -m pip install --upgrade "setuptools>=83"
+          # Hosted Python images can preinstall a vulnerable setuptools pin.
+          # Patched setuptools requires Python >=3.10; on Python 3.9 it is
+          # build-only for this wheel, so remove it before auditing runtime deps.
+          if python -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)'; then
+            python -m pip install --upgrade "setuptools>=83"
+          else
+            python -m pip uninstall --yes setuptools
+          fi
           python -m pip install "pip-audit==2.10.1"
           python -m pip_audit --progress-spinner off
           python -m pytest -q python/tests
