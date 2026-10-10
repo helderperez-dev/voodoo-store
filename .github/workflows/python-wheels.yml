@@ -146,6 +146,9 @@ jobs:
           python -m pip install "maturin>=1.9,<2" pytest
           python -m maturin build --release --out dist
           python -m pip install --force-reinstall dist/*.whl
+          # Hosted Python images can preinstall a vulnerable setuptools pin;
+          # upgrade it before auditing the release environment.
+          python -m pip install --upgrade "setuptools>=83"
           python -m pip install "pip-audit==2.10.1"
           python -m pip_audit --progress-spinner off
           python -m pytest -q python/tests
