@@ -173,7 +173,9 @@ jobs:
           else
             python -m pip install "pip-audit==2.9.0"
           fi
-          python -m pip_audit --progress-spinner off
+          # Store has no Python runtime dependencies; audit the project
+          # metadata instead of the transient pytest/build toolchain.
+          python -m pip_audit --project . --progress-spinner off
           python -m pytest -q python/tests
       - name: Verify package version
         env:
