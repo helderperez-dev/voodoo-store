@@ -45,7 +45,7 @@ jobs:
       - name: Validate recovery evidence
         run: python scripts/check_dr_evidence.py /tmp/voodoo-store-dr-game-day.json
       - name: Upload recovery evidence
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: voodoo-store-dr-game-day
           path: /tmp/voodoo-store-dr-game-day.json

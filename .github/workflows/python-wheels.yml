@@ -186,7 +186,7 @@ jobs:
           python -m pip install --force-reinstall dist/*.whl pytest "pip-audit==2.10.1"
           python -m pip_audit --progress-spinner off
           python -m pytest -q python/tests
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: voodoo-store-${{ matrix.name }}
           path: dist/*.whl
@@ -219,7 +219,7 @@ jobs:
           assert installed == voodoo_store.__version__
           print(f"verified source distribution {installed}")
           PY
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: voodoo-store-sdist
           path: dist/*.tar.gz
@@ -297,7 +297,7 @@ jobs:
           print(f"verified {len(manifest['artifacts'])} release artifacts")
           PY
       - name: Upload validated Grafana dashboard
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: voodoo-store-grafana-dashboard-${{ needs.prepare.outputs.version }}
           path: docs/OBSERVABILITY_GRAFANA_DASHBOARD.json
