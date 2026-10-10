@@ -34,3 +34,4 @@ manifest-path = "crates/voodoo-store-python/Cargo.toml"
 python-source = "python"
 module-name = "voodoo_store._native"
 bindings = "pyo3"
+include = [{ path = "LICENSE", format = "sdist" }]
